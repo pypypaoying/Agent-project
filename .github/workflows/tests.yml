@@ -2,7 +2,7 @@ name: Verification
 
 on:
   push:
-    branches: [main, 'codex/d5-*']
+    branches: [main, 'codex/d5-*', 'codex/desktop-*']
   pull_request:
   workflow_dispatch:
 
@@ -33,15 +33,37 @@ jobs:
           python-version: ${{ matrix.python }}
           enable-cache: true
       - name: Install locked dependencies
-        run: uv sync --locked --python ${{ matrix.python }}
+        run: uv sync --locked --extra web --python ${{ matrix.python }}
       - name: Run host tests (no generated code on host)
-        run: uv run --frozen pytest -q -m 'not docker'
+        run: uv run --frozen --extra web pytest -q -m 'not docker'
       - name: Verify config-driven offline intake
-        run: uv run --frozen labweaver intake --offline --task '概览字段与缺失情况'
-  docker:
-    name: Ubuntu / real Docker
+        run: uv run --frozen --extra web labweaver intake --offline --task '概览字段与缺失情况'
+  frontend:
+    name: Frontend / unit tests and build
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install locked frontend dependencies
+        run: npm ci
+      - name: Frontend unit tests
+        run: npm test
+      - name: Production frontend build
+        run: npm run build
+  docker:
+    name: Ubuntu / real Docker and browser
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       LANGSMITH_TRACING: 'false'
       LABWEAVER_REQUIRE_DOCKER: '1'
@@ -53,13 +75,37 @@ jobs:
         with:
           version: '0.11.12'
           python-version: '3.11'
-      - run: uv sync --locked --python 3.11
+      - run: uv sync --locked --extra web --python 3.11
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install and build browser interface
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+          npx playwright install --with-deps chromium
       - name: Build locked analysis sandbox
         run: docker build -t labweaver-python:0.2.0 sandbox
       - name: Real container acceptance and isolation
-        run: uv run --frozen pytest -q -m docker --basetemp .cache/pytest-docker-ci
+        run: uv run --frozen --extra web pytest -q -m 'docker and not live' --basetemp .cache/pytest-docker-ci
       - name: Public survey example through both Agents
-        run: uv run --frozen labweaver intake --offline --csv examples/data/survey.csv --task '统计部门满意度平均值并绘制柱状图'
+        run: uv run --frozen --extra web labweaver intake --offline --csv examples/data/survey.csv --task '统计部门满意度平均值并绘制柱状图'
+      - name: Browser workflow with actual Docker computation
+        working-directory: frontend
+        run: npm run test:e2e
+      - name: Preserve browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: browser-failure-evidence
+          retention-days: 3
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/
+          if-no-files-found: warn
       - name: Preserve synthetic chart evidence for visual review
         if: always()
         uses: actions/upload-artifact@v7.0.2

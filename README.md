@@ -6,6 +6,24 @@
 
 主 Agent 使用 Deep Agents 理解任务、按需检索、澄清并核对交付项；独立代码 Agent 使用 LangChain `create_agent`，通过 pandas、NumPy、Matplotlib 完成处理、计算和绘图。采用轻量计划＋ReAct 工具循环＋有限报错修正。固定统计与绘图工具已经替换。
 
+## 本地聊天界面
+
+浏览器应用复用现有双 Agent 和 Docker 执行。支持上传 CSV、可选资料、流式执行事件、澄清回复、真实结果与下载，并保存基础聊天历史。一个对话固定一份 CSV；首次发送后附件冻结。重启后能查看历史并继续发起新任务，不能恢复已中断的内存检查点。
+
+先按下面的 Docker 与模型配置步骤准备环境，再一次性安装界面依赖并构建：
+
+```powershell
+uv sync --locked --extra web
+cd frontend
+npm ci
+npm run build
+cd ..
+```
+
+构建需要 Node.js；日常使用双击仓库根目录 `start-labweaver.cmd`，或执行 `uv run --frozen --no-sync --extra web labweaver serve --open`。页面仅通过受保护的回环 API 访问本机数据，API Key 不传给前端。关闭启动终端前先停止任务；关闭浏览器页面不会自动停止分析。
+
+右侧执行面板展示实际代码、执行错误和检索出处；完整 CSV 下载与表格预览分开。数据库、附件与成果保存在用户应用数据目录，不进入仓库。搜索、工作空间、独立知识库和 Tauri 安装包尚未实现。应用设计见 [Desktop](docs/desktop.md)，操作及测试见 [使用](docs/usage.md)和[验收](docs/verification.md)。
+
 ## 安装与 VS Code 使用
 
 1. 安装 Python 3.11/3.12、uv 和 Docker Desktop，启用 **Linux containers**。Windows 需要可运行的 WSL2 和硬件虚拟化；系统要求重启时先完成重启。
@@ -58,10 +76,10 @@ replayed = replay_analysis(saved["record_path"], "selected.csv")
 ## 验证与当前边界
 
 ```powershell
-uv run --frozen pytest -q -m "not docker"
+uv run --frozen --extra web pytest -q -m "not docker"
 # 构建镜像并启动 Docker 后：
 $env:LABWEAVER_REQUIRE_DOCKER="1"
-uv run --frozen pytest -q -m docker
+uv run --frozen --extra web pytest -q -m "docker and not live"
 ```
 
 宿主测试和真实容器验收分别记录，CI 包含 Ubuntu/Windows × Python 3.11/3.12，以及 Ubuntu 的真实 Docker 测试。当前结果与本机环境状态见 [验收](docs/verification.md)，代码结构和权限见 [架构](docs/architecture.md)。

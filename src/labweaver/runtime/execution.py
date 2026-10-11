@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -76,13 +77,50 @@ def snapshot_payload(snapshot):
 
 
 class DockerExecutor:
-    def __init__(self, config=None):
+    def __init__(self, config=None, *, cancellation_event=None):
         self.config = config or ExecutionConfig()
         self._lock = threading.RLock()
         self._container = None
         self._cancelled = threading.Event()
+        self.cancellation_event = cancellation_event
+        self.owner_labels = {}
+        self.on_lifecycle = None
         self.image_id = None
         self._endpoint = None
+
+    def set_owner(self, app_id, run_id, on_lifecycle=None):
+        """Bind trusted application ownership for supervised cleanup, never model input."""
+        if any(
+            not isinstance(value, str)
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,79}", value)
+            for value in (app_id, run_id)
+        ):
+            raise ValueError("Invalid execution owner identifier")
+        if on_lifecycle is not None and not callable(on_lifecycle):
+            raise ValueError("on_lifecycle must be callable")
+        with self._lock:
+            if self._container:
+                raise ValueError("Cannot change owner during active execution")
+            self.owner_labels = {"labweaver.app": app_id, "labweaver.run": run_id}
+            self.on_lifecycle = on_lifecycle
+
+    def is_cancelled(self):
+        return self._cancelled.is_set() or (
+            self.cancellation_event is not None and self.cancellation_event.is_set()
+        )
+
+    def _notify_lifecycle(self, phase, name, **details):
+        if self.on_lifecycle:
+            self.on_lifecycle(
+                {
+                    "type": "container_lifecycle",
+                    "phase": phase,
+                    "name": name,
+                    "endpoint": self._endpoint,
+                    "labels": dict(self.owner_labels),
+                    **details,
+                }
+            )
 
     def _docker_cli(self, docker):
         return [docker] + (["--host", self._endpoint] if self._endpoint else [])
@@ -173,6 +211,7 @@ class DockerExecutor:
             self._remove(name)
 
     def _remove(self, name):
+        confirmed = False
         try:
             docker = docker_executable()
             removed = subprocess.run(
@@ -183,22 +222,30 @@ class DockerExecutor:
                 env=self._client_env(),
             )
             if removed.returncode == 0:
-                return True
-            probe = subprocess.run(
-                self._docker_cli(docker) + ["inspect", name],
-                capture_output=True,
-                timeout=10,
-                env=self._client_env(),
-            )
-            return b"No such" in probe.stderr
+                confirmed = True
+            else:
+                probe = subprocess.run(
+                    self._docker_cli(docker) + ["inspect", name],
+                    capture_output=True,
+                    timeout=10,
+                    env=self._client_env(),
+                )
+                confirmed = b"No such" in probe.stderr
         except (OSError, subprocess.TimeoutExpired, ExecutionError):
-            return False
+            confirmed = False
+        self._notify_lifecycle("removed", name, removed=confirmed)
+        return confirmed
 
     def command(self, docker, image_id, name, input_dir):
         return self._docker_cli(docker) + [
             "run",
             "--name",
             name,
+            *[
+                item
+                for key, value in self.owner_labels.items()
+                for item in ("--label", f"{key}={value}")
+            ],
             "--network",
             "none",
             "--read-only",
@@ -278,9 +325,11 @@ class DockerExecutor:
         try:
             if invalid_code or not code.strip() or len(code.encode()) > 128 * 1024:
                 raise ExecutionError("invalid_code", "Script must contain 1..128 KiB")
-            if self._cancelled.is_set():
+            if self.is_cancelled():
                 raise ExecutionError("cancelled", "Execution cancelled")
             docker, image_id = self.preflight()
+            if self.is_cancelled():
+                raise ExecutionError("cancelled", "Execution cancelled")
             record["image_id"] = image_id
             with tempfile.TemporaryDirectory(prefix="labweaver-input-") as folder:
                 input_dir = Path(folder)
@@ -294,7 +343,12 @@ class DockerExecutor:
                 (input_dir / "analysis.py").write_text(code, encoding="utf-8")
                 # Both mounted files contain selected data/code only, never environment variables.
                 with self._lock:
+                    if self.is_cancelled():
+                        raise ExecutionError("cancelled", "Execution cancelled")
                     self._container = name
+                record["container_name"] = name
+                record["owner_labels"] = dict(self.owner_labels)
+                self._notify_lifecycle("starting", name)
                 process = subprocess.Popen(
                     self.command(docker, image_id, name, input_dir),
                     stdout=subprocess.PIPE,
@@ -331,13 +385,13 @@ class DockerExecutor:
                 try:
                     while process.poll() is None:
                         if (
-                            self._cancelled.is_set()
+                            self.is_cancelled()
                             or overflow.is_set()
                             or time.monotonic() >= deadline
                         ):
                             reason = (
                                 "cancelled"
-                                if self._cancelled.is_set()
+                                if self.is_cancelled()
                                 else "output_limit"
                                 if overflow.is_set()
                                 else "execution_timeout"
@@ -414,7 +468,7 @@ class DockerExecutor:
                         process.wait(timeout=10)
                     removed = self._remove(name)
                     record["container_removed"] = removed
-                    if not removed and not self._cancelled.is_set():
+                    if not removed and not self.is_cancelled():
                         raise ExecutionError(
                             "container_cleanup_failed",
                             "Container cleanup could not be confirmed",

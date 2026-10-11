@@ -24,6 +24,7 @@ class ExecutionHarness(AgentMiddleware):
         model_limit=12,
         model_counter=None,
         reject_invalid=True,
+        cancellation_event=None,
     ):
         self.limits = limits
         self.available = available or (lambda: set(limits))
@@ -31,9 +32,15 @@ class ExecutionHarness(AgentMiddleware):
         self.model_limit = model_limit
         self.model_counter = model_counter
         self.reject_invalid = reject_invalid
+        self.cancellation_event = cancellation_event
         self._lock = threading.RLock()
         self._active = threading.local()
         self.new_task()
+
+    def check_cancelled(self):
+        """Observe the host signal before admitting work or charging a budget."""
+        if self.cancellation_event is not None and self.cancellation_event.is_set():
+            raise HarnessRejected("cancelled")
 
     def new_task(self):
         self.model_calls = self.tool_attempts = 0
@@ -44,6 +51,7 @@ class ExecutionHarness(AgentMiddleware):
 
     def wrap_model_call(self, request, handler):
         with self._lock:
+            self.check_cancelled()
             if self.failure:
                 raise HarnessRejected(self.failure)
             if self.model_counter:
@@ -72,6 +80,7 @@ class ExecutionHarness(AgentMiddleware):
                 ),
             )
         )
+        self.check_cancelled()
         self.events.extend(_trace_messages(response.result))
         return response
 
@@ -90,6 +99,7 @@ class ExecutionHarness(AgentMiddleware):
         call = request.tool_call
         cid, name = call.get("id"), call.get("name")
         with self._lock:
+            self.check_cancelled()
             if not isinstance(cid, str) or not cid:
                 return self._reject(call, "unmatched_tool_evidence")
             if cid in self._admitted:

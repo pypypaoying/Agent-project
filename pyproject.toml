@@ -21,6 +21,14 @@ dependencies = [
 [project.scripts]
 labweaver = "labweaver.cli:main"
 
+[project.optional-dependencies]
+web = [
+    "fastapi>=0.135,<0.140",
+    "uvicorn>=0.41,<0.44",
+    "python-multipart>=0.0.22,<0.1",
+    "httpx>=0.28,<0.29",
+]
+
 [dependency-groups]
 dev = ["pytest>=8.4,<10"]
 
@@ -30,7 +38,7 @@ packages = ["src/labweaver"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
-markers = ["docker: real isolated Docker integration (requires prebuilt sandbox image)"]
+markers = ["docker: real isolated Docker integration (requires prebuilt sandbox image)", "live: opt-in online model acceptance (never uses CI model secrets)"]
 
 [tool.uv]
 cache-dir = ".cache/uv"

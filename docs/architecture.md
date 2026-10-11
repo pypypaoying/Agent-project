@@ -1,4 +1,6 @@
-# 现行架构：D5
+# Agent 核心与应用架构
+
+以下保留 D5 分析核心。P1 浏览器应用在其外侧增加 FastAPI、SQLite、受管理文件、SSE 和受控工作进程；不会通过 CLI 输出解析调用 Agent，也不会增加宿主代码执行路径。应用层边界、状态机、数据模型及安全设计见 [Desktop 设计](desktop.md)。
 
 ```mermaid
 flowchart TD
@@ -26,7 +28,8 @@ flowchart TD
 
 | 模块 | 主要职责 |
 |---|---|
-| `app.py`、`cli.py` | 唯一正式对话入口与保留的 CLI；收集输入、显示流式进度和结果 |
+| `app.py`、`cli.py` | VS Code 对话入口与保留的 CLI；收集输入、显示流式进度和结果；CLI 提供本地应用启动 |
+| `web/`、`frontend/` | 本地应用服务、受控工作进程、基础历史与文件关联；React 真实聊天界面 |
 | `config.py`、`run_config.py` | 模型凭证与运行设置分开读取；不把凭证写入记录 |
 | `agent.py` | `AgentSession`、`create_session()`、`run_intake()`；主图、计划、委派、RAG、澄清与完成校验 |
 | `analysis.py` | `AnalysisRunner.delegate()`；独立 `create_agent` 上下文，完整脚本执行与有限修正 |
@@ -61,3 +64,5 @@ flowchart TD
 计算产物必须对应计划中的交付项且来自实际成功执行；子 Agent 返回的 ID 要与宿主登记一致。显式图表要求还需真实 figure 产物。纯概览或字段解释可以根据实际概览/检索结果直接交付报告；若记录了 explanation 交付项，answer_deliverables 将其绑定到 final_answer 和输入来源，不伪造代码执行。表格、指标、图表及计算解释不能用正文替代。缺少交付项返回 error，并保存合法的部分成果。校验不证明代码的统计口径必然正确，也不证明每句话都被引用支持。
 
 报告版本为 2。旧 JSON 留在本地，不转换成可恢复会话；内存检查点仅在当前进程有效。成功脚本重放需要相同输入哈希和本地原镜像 ID，重放结果仍需核对表格/指标。
+
+应用运行 ID 与核心会话/任务 ID 分开。应用在核心证据通过、成果写入和 SQLite 登记都完成后才发布 completed；历史记录恢复不恢复执行检查点。服务重启后未完成任务标记 interrupted，后续任务使用新的 Agent 运行时和核验后的历史背景。

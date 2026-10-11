@@ -1,0 +1,43 @@
+"""Host-only application settings. No model credentials cross the HTTP boundary."""
+
+from dataclasses import dataclass
+import os
+from pathlib import Path
+import secrets
+
+
+def default_data_dir() -> Path:
+    if os.name == "nt":
+        return Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local")) / "LabWeaver"
+    return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "labweaver"
+
+
+@dataclass(frozen=True)
+class WebSettings:
+    data_dir: Path
+    token: str
+    project_dir: Path
+    mode: str = "live"
+    env_file: Path | None = None
+    image: str = "labweaver-python:0.2.0"
+    execution_timeout: int = 60
+    analysis_max_tokens: int = 4096
+    frontend_dir: Path | None = None
+    allowed_hosts: tuple[str, ...] = ("127.0.0.1", "localhost")
+    allowed_origins: tuple[str, ...] = ()
+    cancel_grace: float = 5.0
+
+    @classmethod
+    def from_project(cls, *, data_dir=None, mode=None, token=None, config=None):
+        from labweaver.run_config import load_intake_config
+
+        project = Path.cwd().resolve()
+        intake = load_intake_config(config, overrides={"mode": mode} if mode else {})
+        return cls(
+            data_dir=Path(data_dir or default_data_dir()).resolve(),
+            token=token or secrets.token_urlsafe(32), project_dir=project,
+            mode=intake.mode, env_file=intake.env_file,
+            image=intake.execution_image, execution_timeout=intake.execution_timeout,
+            analysis_max_tokens=intake.analysis_max_tokens,
+            frontend_dir=project / "frontend/dist",
+        )

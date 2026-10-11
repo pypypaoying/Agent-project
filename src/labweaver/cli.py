@@ -20,6 +20,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="LabWeaver read-only CSV task agent")
     parser.add_argument("--version", action="version", version="LabWeaver 0.2.0")
     commands = parser.add_subparsers(dest="command", required=True)
+    web = commands.add_parser("serve", help="Open the local Desktop browser application")
+    web.add_argument("--open", action="store_true")
+    web.add_argument("--data-dir", type=Path)
+    web.add_argument("--config", type=Path)
+    web.add_argument("--port", type=int, choices=range(1024, 65536), default=8765, metavar="PORT")
+    web_mode = web.add_mutually_exclusive_group()
+    web_mode.add_argument("--offline", action="store_const", const="offline", dest="mode")
+    web_mode.add_argument("--live", action="store_const", const="live", dest="mode")
     command = commands.add_parser("intake")
     command.add_argument("--config", type=Path)
     command.add_argument("--csv", type=Path)
@@ -47,6 +55,18 @@ def main(argv: list[str] | None = None) -> int:
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8")
     args = build_parser().parse_args(argv)
+    if args.command == "serve":
+        from labweaver.web.security import AppError
+
+        try:
+            from labweaver.web.server import serve
+            return serve(args)
+        except AppError as exc:
+            print(f"{exc.code}: {exc.message}", file=sys.stderr)
+            return 2
+        except (ConfigurationError, OSError) as exc:
+            print(str(exc) if isinstance(exc, ConfigurationError) else "Application data directory or service could not be opened.", file=sys.stderr)
+            return 2
     overrides = {
         key: value
         for key, value in vars(args).items()

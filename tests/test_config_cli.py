@@ -8,6 +8,28 @@ from labweaver.config import ConfigurationError, load_config
 from labweaver.runtime.records import save_run
 
 
+@pytest.mark.parametrize(
+    "code,message",
+    [
+        ("already_running", "该数据目录已有应用运行，请先关闭已有窗口。"),
+        ("unsafe_path", "应用文件不能使用符号链接或重解析点。"),
+        ("schema_version", "数据库版本不兼容，请使用匹配的应用版本。"),
+    ],
+)
+def test_serve_application_errors_are_actionable_without_traceback(
+    code, message, monkeypatch, capsys
+):
+    from labweaver.web import server
+    from labweaver.web.security import AppError
+
+    def fail(args):
+        raise AppError(code, message, 409)
+
+    monkeypatch.setattr(server, "serve", fail)
+    assert main(["serve"]) == 2
+    assert capsys.readouterr().err == f"{code}: {message}\n"
+
+
 @pytest.fixture(autouse=True)
 def isolated_model_environment(monkeypatch):
     for name in ("LLM_API_KEY", "LLM_BASE_URL", "LLM_MODEL_ID", "LLM_TIMEOUT"):

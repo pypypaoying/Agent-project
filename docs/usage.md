@@ -1,5 +1,36 @@
 # 使用与检验
 
+## Windows 本地聊天界面
+
+浏览器应用需要先完成下面的 Docker 与模型配置。首次安装额外需要 Node.js 构建前端；日常运行只使用 Python 服务和构建后的页面，不启动 Vite，也不自动安装 Docker 或分析依赖。
+
+```powershell
+uv sync --locked --extra web
+cd frontend
+npm ci
+npm run build
+cd ..
+```
+
+双击 `start-labweaver.cmd`。也可从仓库根目录执行：
+
+```powershell
+uv run --frozen --no-sync --extra web labweaver serve --open
+```
+
+启动会检查模型配置、数据目录和本地 Docker/镜像。页面的应用访问令牌由启动链接传入后从地址栏移除；它不是模型 API Key。无需把密钥粘贴到聊天框。服务仅绑定 `127.0.0.1`，不要配置公共监听地址。
+
+1. 新建对话，选择或拖入一份 CSV，可加 TXT/Markdown/文字型 PDF。上传后查看预览；图片、Excel、JSON、DOCX 尚不支持分析。
+2. 输入任务并发送。首次发送冻结 CSV 和资料；需要更换输入时新建对话。输入法确认不会发送，Shift+Enter 换行。
+3. 等待时可展开执行面板查看真实计划、Python、错误及资料来源；出现澄清问题时在当前运行提交回复。
+4. 核验完成后查看表格/图表，下载完整 CSV、PNG/SVG、代码和报告。表格显示的是分页预览，完整结果没有 100 行限制。
+5. 停止后等待取消与容器清理确认；关闭或刷新浏览器不会自动重跑或取消。全局只有一个活动任务，等待回复时也占用该位置。
+6. 服务重启后重新打开历史，继续提交新任务。旧的未完成运行会显示 interrupted，不能回复旧问题以恢复节点；可按原任务重新执行。
+
+基础历史、导入附件和生成成果位于应用数据目录，与 CLI 的 `runs/` 分开。旧对话的新运行重建有限历史背景，再从原始 CSV 重新计算。Windows 资源管理器复制的文件未必能直接粘贴到浏览器；失败时使用拖拽或文件选择器，粘贴路径不会读取磁盘。
+
+离线公开演示可使用 `labweaver serve --offline --open`，分析仍需要真实 Docker；确定性模型只支持有限示例。搜索、重命名/删除管理、工作空间、独立知识库与桌面安装包留待 P2–P4。详细架构见 [Desktop](desktop.md)。
+
 ## Windows / VS Code
 
 首次安装 Docker Desktop 与 WSL2、启用 Virtual Machine Platform/硬件虚拟化，按系统要求重启。确认 Docker Desktop Linux 引擎已运行，再在 VS Code 的 Terminal → Run Task 选择 **LabWeaver: Build analysis sandbox**。安装宿主依赖 `uv sync --locked` 后选择项目 `.venv` 解释器。

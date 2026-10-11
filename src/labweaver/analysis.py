@@ -38,7 +38,15 @@ class ReadArguments(BaseModel):
 
 class AnalysisRunner:
     def __init__(
-        self, model, executor, *, get_snapshot, register, read_asset, progress=None
+        self,
+        model,
+        executor,
+        *,
+        get_snapshot,
+        register,
+        read_asset,
+        progress=None,
+        cancellation_event=None,
     ):
         self.model, self.executor = model, executor
         self.get_snapshot, self.register, self.read_asset = (
@@ -47,6 +55,7 @@ class AnalysisRunner:
             read_asset,
         )
         self.progress = progress or (lambda event: None)
+        self.cancellation_event = cancellation_event
         self._delegation_lock = threading.Lock()
         self.new_task()
 
@@ -85,6 +94,7 @@ class AnalysisRunner:
             {"execute_python": 3, "read_artifact": 8},
             model_counter=self._charge,
             reject_invalid=False,
+            cancellation_event=self.cancellation_event,
         )
         available = set()
         attempt_ids = []
@@ -97,7 +107,16 @@ class AnalysisRunner:
                 return execute_script(code)
 
         def execute_script(code):
-            progress({"type": "execution_start", "attempt": len(attempt_ids) + 1})
+            progress(
+                {
+                    "type": "execution_start",
+                    "role": "analysis",
+                    "attempt": len(attempt_ids) + 1,
+                    "parent_call_id": parent_id,
+                    "tool_call_id": harness._active.call_id,
+                    "code": code,
+                }
+            )
             record, assets = self.executor.execute(
                 code,
                 self.get_snapshot(),
@@ -129,6 +148,11 @@ class AnalysisRunner:
                     "type": "execution_end",
                     "attempt": len(attempt_ids),
                     "status": record["status"],
+                    "role": "analysis",
+                    "parent_call_id": parent_id,
+                    "tool_call_id": harness._active.call_id,
+                    "record": copy.deepcopy(record),
+                    "artifacts": copy.deepcopy(output["artifacts"]),
                 }
             )
             return harness.record(output, "execute_python")

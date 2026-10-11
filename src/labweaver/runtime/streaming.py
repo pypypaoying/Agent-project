@@ -65,7 +65,8 @@ def stream_execution(graph, command, config, on_event):
     """Drive the graph exactly once, retaining interrupts and authoritative state.
 
     answer_delta is provisional until a subsequent validated event. No raw JSON,
-    tool arguments, retrieved content, child-agent text or reasoning is emitted.
+    model tool arguments, child-agent text or reasoning is emitted. Host-generated
+    execution and retrieval events contain genuine bounded evidence for the UI.
     """
     result, buffers, prefixes, starts, ends = {}, {}, {}, set(), set()
     interrupts = ()
@@ -85,6 +86,8 @@ def stream_execution(graph, command, config, on_event):
                 "plan",
                 "execution_start",
                 "execution_end",
+                "retrieval_result",
+                "container_lifecycle",
             }:
                 on_event(data)
         elif event["type"] == "values":
