@@ -39,7 +39,11 @@ class Store:
             if version == 0:
                 script = (Path(__file__).parent / "migrations/001.sql").read_text(encoding="utf-8")
                 conn.executescript("BEGIN IMMEDIATE;\n" + script + "\nCOMMIT;")
-            elif version != 1:
+                version = 1
+            if version == 1:
+                script = (Path(__file__).parent / "migrations/002.sql").read_text(encoding="utf-8")
+                conn.executescript("BEGIN IMMEDIATE;\n" + script + "\nCOMMIT;")
+            elif version != 2:
                 raise AppError("schema_version", "数据库版本不兼容，请使用匹配的应用版本。", 503)
             conn.execute("INSERT OR IGNORE INTO app_meta VALUES ('app_id',?)", (uid(),))
             self.app_id = conn.execute("SELECT value FROM app_meta WHERE key='app_id'").fetchone()[0]

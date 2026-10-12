@@ -1,9 +1,10 @@
 """Host-only application settings. No model credentials cross the HTTP boundary."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import os
 from pathlib import Path
 import secrets
+from labweaver.config import ModelConfig
 
 
 def default_data_dir() -> Path:
@@ -26,6 +27,7 @@ class WebSettings:
     allowed_hosts: tuple[str, ...] = ("127.0.0.1", "localhost")
     allowed_origins: tuple[str, ...] = ()
     cancel_grace: float = 5.0
+    model_config: ModelConfig | None = field(default=None, repr=False)
 
     @classmethod
     def from_project(cls, *, data_dir=None, mode=None, token=None, config=None):

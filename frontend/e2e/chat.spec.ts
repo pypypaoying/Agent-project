@@ -56,6 +56,41 @@ test('repeated New Conversation clicks reuse the same empty draft', async ({ pag
   await expect(button.locator('svg')).toHaveAttribute('width', '20');
 });
 
+test('provider settings save write-only credentials and clear them when returning to chat', async ({ page }, testInfo) => {
+  await page.goto(`/#token=${token}`);
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '模型供应商' })).toBeVisible();
+  await page.getByRole('button', { name: '＋ 添加兼容供应商' }).click();
+  const providerName = `浏览器兼容服务 ${Date.now()}`;
+  const key = 'browser-test-private-key-sentinel';
+  await page.getByRole('textbox', { name: '供应商名称' }).fill(providerName);
+  await page.getByRole('textbox', { name: 'Base URL' }).fill('https://example.invalid/v1');
+  await page.getByLabel('API Key', { exact: true }).fill(key);
+  await page.getByRole('textbox', { name: '模型列表' }).fill('my-analysis-model');
+  await page.getByRole('combobox', { name: '默认模型' }).fill('my-analysis-model');
+  await page.getByRole('button', { name: '保存配置' }).click();
+  await expect(page.getByRole('status')).toContainText('配置已保存');
+  await expect(page.getByLabel('API Key', { exact: true })).toHaveValue('');
+  const response = await page.request.get('/api/v1/settings/providers', { headers: { Authorization: `Bearer ${token}` } });
+  const actual = await response.json();
+  const provider = actual.providers.find((item: { name: string }) => item.name === providerName);
+  expect(provider.has_key).toBe(true); expect(provider.models).toEqual(['my-analysis-model']);
+  expect(JSON.stringify(actual)).not.toContain(key);
+  expect(await page.evaluate(() => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }))).not.toContain(key);
+  await page.locator('.settings-main').evaluate(element => { element.scrollTop = 0; });
+  await page.screenshot({ path: testInfo.outputPath('settings-desktop.png'), fullPage: true, animations: 'disabled' });
+  await page.setViewportSize({ width: 820, height: 700 });
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(page.locator('.settings-main')).toHaveCSS('background-color', 'rgb(29, 30, 32)');
+  await page.locator('.settings-main').evaluate(element => { element.scrollTop = 0; });
+  await page.screenshot({ path: testInfo.outputPath('settings-small-dark.png'), fullPage: true, animations: 'disabled' });
+  await page.getByRole('button', { name: '保存配置' }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath('settings-actions-dark.png'), fullPage: true, animations: 'disabled' });
+  await page.getByRole('button', { name: '返回聊天' }).click();
+  await expect(page.getByRole('button', { name: '选择模型' })).toBeDisabled();
+  await expect(page.getByText('离线演示', { exact: true })).toBeVisible();
+});
+
 test('CSV overview is genuinely profiled, streamed, persisted and downloadable', async ({ page }, testInfo) => {
   await start(page, '中文问卷.csv', '编号,评分,备注\n001,4,NA\n002,2,\n');
   const responses: string[] = [];

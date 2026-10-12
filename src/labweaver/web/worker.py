@@ -103,7 +103,7 @@ def agent_worker(settings, app_id, csv_path, materials, context, commands, event
             from labweaver.offline import OfflineIntakeModel, OfflineAnalysisModel
             main, child = OfflineIntakeModel(), OfflineAnalysisModel()
         else:
-            config = load_config(settings.env_file, use_default_env=False)
+            config = settings.model_config or load_config(settings.env_file, use_default_env=False)
             main = create_model(config)
             child = create_model(config, max_tokens=settings.analysis_max_tokens)
         session = create_session(csv_path, main, material_paths=materials, analysis_model=child,

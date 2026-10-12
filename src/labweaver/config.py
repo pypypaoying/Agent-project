@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from dotenv import dotenv_values
 
@@ -57,6 +58,12 @@ def load_config(
 def create_model(config: ModelConfig, *, max_tokens=1200):
     from langchain_openai import ChatOpenAI
 
+    options = {}
+    if (urlsplit(config.base_url).hostname == "api.deepseek.com"
+            and config.model_id in {"deepseek-flash", "deepseek-v4-pro", "deepseek-v4-flash"}):
+        # ChatOpenAI does not round-trip DeepSeek reasoning_content. Official
+        # thinking-mode tool calls require that field on subsequent requests.
+        options["extra_body"] = {"thinking": {"type": "disabled"}}
     return ChatOpenAI(
         model=config.model_id,
         base_url=config.base_url,
@@ -65,4 +72,5 @@ def create_model(config: ModelConfig, *, max_tokens=1200):
         timeout=config.timeout,
         max_retries=0,
         max_tokens=max_tokens,
+        **options,
     )

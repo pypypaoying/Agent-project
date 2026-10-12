@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { api, ApiError, downloadFile, streamEvents } from './api';
 import { summarizeProgress, type ProgressStep } from './progress';
-import type { Artifact, Conversation, ConversationDetail, ManagedFile, Message, Run, RunEvent, RunStatus, TablePreview } from './types';
+import { defaultSelection, ModelPicker, providerReady, ProviderSettings } from './providers';
+import type { Artifact, Conversation, ConversationDetail, ManagedFile, Message, ModelSelection, ProviderCatalog, Run, RunEvent, RunStatus, TablePreview } from './types';
 
 const activeStatuses: RunStatus[] = ['running', 'awaiting_input', 'cancelling'];
 const labels: Record<RunStatus, string> = { running: '正在分析', awaiting_input: '等待回复', cancelling: '正在停止', completed: '已完成', error: '未完成', cancelled: '已停止', interrupted: '运行已中断' };
@@ -23,7 +24,7 @@ const displayColumn = (value: unknown): string => {
   return text(value);
 };
 
-function Icon({ name }: { name: 'plus' | 'attach' | 'panel' | 'arrow' | 'stop' | 'file' | 'download' | 'close' | 'check' }) {
+function Icon({ name }: { name: 'plus' | 'attach' | 'panel' | 'arrow' | 'stop' | 'file' | 'download' | 'close' | 'check' | 'settings' }) {
   const paths = {
     plus: <path d="M12 5v14M5 12h14" />,
     attach: <path d="m9 14 6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l9-9" />,
@@ -34,6 +35,7 @@ function Icon({ name }: { name: 'plus' | 'attach' | 'panel' | 'arrow' | 'stop' |
     download: <><path d="M12 3v12m-5-5 5 5 5-5M5 17v4h14v-4" /></>,
     close: <path d="m6 6 12 12M18 6 6 18" />,
     check: <path d="m5 12 4 4 10-10" />,
+    settings: <><path d="m9 3-1 3-3 1-2 3 2 2-1 3 3 2 1 3h4l1-3 3-1 2-3-2-2 1-3-3-2-1-3z" /><circle cx="11" cy="11" r="3" /></>,
   };
   return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
@@ -138,6 +140,7 @@ function RunCard({ run, liveAnswer, messages, events, onError, onRerun }: { run:
     {messages.filter(message => message.question_id && (message.role === 'user' || message.state === 'answered')).map(message => <div key={message.id} className={`confirmation-message ${message.role === 'user' ? 'confirmed-reply' : ''}`}><span className="message-label">{message.role === 'user' ? '你的确认回复' : 'Agent 澄清'}</span><p>{message.content}</p></div>)}
     <div className="assistant-message">
       <div className="assistant-heading"><span className="brand-dot small" /><strong>LabWeaver</strong><span className={`status status-${run.status}`}>{labels[run.status]}</span></div>
+      {run.model_selection && <p className="run-model-label muted">{run.model_selection.provider_name ?? run.model_selection.provider_id} · {run.model_selection.model_id}</p>}
       <RunProgress run={run} events={events} />
       {(liveAnswer || final) && <><Markdown>{final || liveAnswer || ''}</Markdown>{provisional && <span className="muted verification">正文待核验，尚未确认交付完成</span>}</>}
       {run.status === 'running' && !liveAnswer && !final && <p className="muted working"><span className="pulse" />正在分析，回答与成果仍需核验。</p>}
@@ -170,6 +173,10 @@ export function App({ authenticated }: { authenticated: boolean }) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [detail, setDetail] = useState<ConversationDetail | null>(null);
   const [health, setHealth] = useState<Record<string, unknown> | null>(null);
+  const [catalog, setCatalog] = useState<ProviderCatalog | null>(null);
+  const [selection, setSelection] = useState<ModelSelection | null>(null);
+  const [page, setPage] = useState<'chat' | 'settings'>('chat');
+  const [settingsProvider, setSettingsProvider] = useState<string | undefined>();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [task, setTask] = useState('');
@@ -192,6 +199,7 @@ export function App({ authenticated }: { authenticated: boolean }) {
   const latestRun = activeRun ?? detail?.runs.at(-1);
   const frozen = Boolean(detail?.conversation.frozen || detail?.conversation.inputs_frozen || detail?.runs.length);
   const hasCsv = detail?.files.some(file => file.role === 'csv' || extension(file.name) === 'csv') ?? false;
+  const modelLocked = Boolean(activeRun || health?.active_run_id || busy);
   const showError = useCallback((message: string) => setError(message), []);
 
   const refreshList = useCallback(async () => {
@@ -204,15 +212,18 @@ export function App({ authenticated }: { authenticated: boolean }) {
     return result;
   }, []);
   const openConversation = useCallback(async (id: string) => {
+    setPage('chat');
     setError(''); setBusy(true); displayedConversation.current = id; setTask(''); setReply(''); setLiveAnswer(''); setEvents([]);
     try {
       const result = await refreshDetail(id);
       if (displayedConversation.current !== id) return;
       setSelectedContexts(result.runs.filter(run => run.status === 'completed').slice(-2).map(run => run.id)); setContextsExplicit(false);
       const last = result.runs.at(-1); setEvents(last?.events ?? []);
+      if (result.model_selection && health?.mode !== 'offline') setSelection(result.model_selection);
     } catch (reason) { setError((reason as Error).message); } finally { setBusy(false); }
-  }, [refreshDetail]);
+  }, [refreshDetail, health?.mode]);
   const newConversation = useCallback(async () => {
+    setPage('chat');
     if (newConversationPending.current) return displayedConversation.current;
     newConversationPending.current = true;
     setError(''); setBusy(true);
@@ -230,6 +241,7 @@ export function App({ authenticated }: { authenticated: boolean }) {
   useEffect(() => {
     if (!authenticated) return;
     void refreshList().catch(reason => setError(reason instanceof ApiError && reason.status === 401 ? '访问令牌已失效，请使用启动器重新打开应用。' : reason.message));
+    void api.providers().then(result => { setCatalog(result); setSelection(previous => previous ?? defaultSelection(result)); }).catch(() => setError('模型供应商列表未能加载，请检查本地服务。'));
   }, [authenticated, refreshList]);
 
   useEffect(() => {
@@ -298,11 +310,17 @@ export function App({ authenticated }: { authenticated: boolean }) {
   };
   const submit = async () => {
     if (busy || activeRun || !task.trim() || !detail || !hasCsv) return;
+    const liveSelection = health?.mode === 'offline' ? null : selection;
+    if (health?.mode !== 'offline') {
+      const selectedProvider = catalog?.providers.find(provider => provider.id === liveSelection?.provider_id);
+      if (!selectedProvider || !providerReady(selectedProvider) || !selectedProvider.models.includes(liveSelection?.model_id ?? '')) { setSettingsProvider(liveSelection?.provider_id); setPage('settings'); return; }
+    }
     setError(''); setBusy(true);
     try {
-      const key = JSON.stringify([detail.conversation.id, task.trim(), contextsExplicit ? selectedContexts : null]);
+      const key = JSON.stringify([detail.conversation.id, task.trim(), contextsExplicit ? selectedContexts : null, liveSelection]);
       if (pendingRequest.current?.key !== key) pendingRequest.current = { key, id: crypto.randomUUID() };
-      await api.start(detail.conversation.id, task.trim(), contextsExplicit ? selectedContexts : undefined, pendingRequest.current.id);
+      if (liveSelection) await api.start(detail.conversation.id, task.trim(), contextsExplicit ? selectedContexts : undefined, pendingRequest.current.id, liveSelection);
+      else await api.start(detail.conversation.id, task.trim(), contextsExplicit ? selectedContexts : undefined, pendingRequest.current.id);
       pendingRequest.current = null;
       setTask(''); setLiveAnswer(''); setEvents([]); await refreshDetail(detail.conversation.id); await refreshList();
     } catch (reason) { setError((reason as Error).message); } finally { setBusy(false); }
@@ -323,20 +341,26 @@ export function App({ authenticated }: { authenticated: boolean }) {
     try { await api.cancel(activeRun.id); await refreshDetail(detail!.conversation.id); }
     catch (reason) { setError((reason as Error).message); } finally { setBusy(false); }
   };
+  const configureProvider = (id?: string) => { setSettingsProvider(id); setPage('settings'); composing.current = false; };
+  const providersUpdated = (next: ProviderCatalog) => {
+    const defaultChanged = catalog?.default_provider_id !== next.default_provider_id || catalog?.default_model_id !== next.default_model_id;
+    setCatalog(next); setSelection(previous => !defaultChanged && next.providers.some(provider => provider.id === previous?.provider_id && provider.models.includes(previous.model_id)) ? previous : defaultSelection(next));
+    void api.health().then(setHealth).catch(() => {});
+  };
 
-  if (!authenticated) return <main className="access-screen"><span className="brand-dot" /><h1>LabWeaver</h1><p>请通过正式启动器打开应用，以获取本次运行的本地访问令牌。</p><p className="muted">已打开的页面失效时，请重新运行启动器。模型 API Key 无需输入网页。</p></main>;
+  if (!authenticated) return <main className="access-screen"><span className="brand-dot" /><h1>LabWeaver</h1><p>请通过正式启动器打开应用，以获取本次运行的本地访问令牌。</p><p className="muted">已打开的页面失效时，请重新运行启动器。模型供应商在应用设置中配置。</p></main>;
 
-  return <div className={`app-shell ${panel ? 'panel-open' : ''}`} onDragOver={event => { event.preventDefault(); if (event.dataTransfer.types.includes('Files')) setDragging(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false); }} onDrop={event => { event.preventDefault(); setDragging(false); void uploadFiles(Array.from(event.dataTransfer.files)); }}>
+  return <div className={`app-shell ${panel && page === 'chat' ? 'panel-open' : ''}`} onDragOver={event => { event.preventDefault(); if (page === 'chat' && event.dataTransfer.types.includes('Files')) setDragging(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false); }} onDrop={event => { event.preventDefault(); setDragging(false); if (page === 'chat') void uploadFiles(Array.from(event.dataTransfer.files)); }}>
     <nav className="sidebar" aria-label="对话导航"><div className="logo"><span className="brand-dot" /><strong>LabWeaver</strong><span className="logo-caption">本地数据分析</span></div>
       <button className="new-chat" disabled={busy} onClick={() => void newConversation()}><Icon name="plus" />新建对话</button>
       <div className="nav-caption">对话历史</div><div className="conversation-list">{conversations.map(conversation => <button className={`conversation-item ${detail?.conversation.id === conversation.id ? 'selected' : ''}`} key={conversation.id} data-conversation-id={conversation.id} disabled={busy} onClick={() => void openConversation(conversation.id)} title={conversation.title}>{conversation.title || '未命名对话'}</button>)}{!conversations.length && <p className="muted nav-empty">还没有对话</p>}</div>
-      <footer className="sidebar-footer"><span className="local-indicator" />本机运行 · 历史保存在本地<span className="muted">分析执行使用 Docker；任务与资料会发给配置的模型服务。</span></footer>
+      <footer className="sidebar-footer"><button className={`settings-nav ${page === 'settings' ? 'selected' : ''}`} aria-label="设置" onClick={() => configureProvider()}><Icon name="settings" /><span>设置</span></button><span className="local-indicator" />本机运行 · 历史保存在本地<span className="muted">分析执行使用 Docker；任务与资料会发给配置的模型服务。</span></footer>
     </nav>
-    <main className="chat-main"><header className="topbar"><div><strong>{detail?.conversation.title || '开始一次数据分析'}</strong><span className="muted">{health?.mode === 'offline' ? '确定性离线演示' : '通用 CSV 分析助手'}</span></div><button className={`icon-button ${panel ? 'selected' : ''}`} aria-label="查看执行面板" aria-pressed={panel} onClick={() => setPanel(!panel)}><Icon name="panel" /></button></header>
+    {page === 'settings' ? <ProviderSettings key={settingsProvider ?? catalog?.default_provider_id ?? 'loading'} catalog={catalog} initialProviderId={settingsProvider} locked={modelLocked} onUpdated={providersUpdated} onBack={() => setPage('chat')} /> : <main className="chat-main"><header className="topbar"><div><strong>{detail?.conversation.title || '开始一次数据分析'}</strong><span className="muted">{health?.mode === 'offline' ? '确定性离线演示' : '通用 CSV 分析助手'}</span></div><button className={`icon-button ${panel ? 'selected' : ''}`} aria-label="查看执行面板" aria-pressed={panel} onClick={() => setPanel(!panel)}><Icon name="panel" /></button></header>
       {error && <div className="notice error-notice" role="alert"><span>{error}</span><button className="icon-button" aria-label="关闭错误提示" onClick={() => setError('')}><Icon name="close" /></button></div>}
       {connection && <div className="notice muted">{connection}</div>}
       {health && (() => { const model = health.model as { ready?: boolean; error?: unknown } | undefined; const docker = health.docker as { ready?: boolean; error?: unknown } | undefined;
-        return model?.ready === false || docker?.ready === false ? <div className="notice environment-notice"><span>{model?.ready === false ? '模型配置未就绪，请检查后端配置文件。' : ''}{model?.ready === false && docker?.ready === false ? ' ' : ''}{docker?.ready === false ? 'Docker 或沙箱镜像未就绪，暂时不能执行 Python 分析；可浏览历史或查看 CSV 概览。' : ''}</span></div> : null;
+        return model?.ready === false || docker?.ready === false ? <div className="notice environment-notice"><span>{model?.ready === false ? '默认模型配置未就绪，可在设置中配置供应商、密钥与模型。' : ''}{model?.ready === false && docker?.ready === false ? ' ' : ''}{docker?.ready === false ? 'Docker 或沙箱镜像未就绪，暂时不能执行 Python 分析；可浏览历史或查看 CSV 概览。' : ''}</span></div> : null;
       })()}
       {typeof health?.active_run_id === 'string' && health.active_run_id !== activeRun?.id && <div className="notice"><span>其他对话有活动任务，完成或停止后可开始新分析。</span><button className="link-button" onClick={() => void api.run(health.active_run_id as string).then(async run => { if (run.conversation_id) await openConversation(run.conversation_id); }).catch(reason => setError(reason.message))}>查看任务</button></div>}
       <div className="chat-scroll">
@@ -345,17 +369,17 @@ export function App({ authenticated }: { authenticated: boolean }) {
       </div>
       <div className="composer-area">
         {detail?.files.length ? <div className="attachments" aria-label="当前附件">{detail.files.map(file => <div className="attachment" key={file.id}><Icon name="file" /><div><strong title={file.name}>{file.name}</strong><small>{file.parse_error ? '解析需确认' : file.role === 'csv' || extension(file.name) === 'csv' ? file.preview?.row_count == null ? 'CSV 数据' : `${file.preview.row_count} 行 · ${file.preview.columns?.length ?? '?'} 列` : '任务资料'}</small></div>{!frozen && <button className="icon-button" aria-label={`移除 ${file.name}`} disabled={busy} onClick={() => { setBusy(true); void api.removeFile(detail.conversation.id, file.id).then(() => refreshDetail(detail.conversation.id)).catch(reason => setError(reason.message)).finally(() => setBusy(false)); }}><Icon name="close" /></button>}<details className="attachment-preview"><summary>预览</summary>{file.preview?.rows && file.preview.columns ? <DataTable preview={{ rows: file.preview.rows, columns: file.preview.columns, row_count: file.preview.row_count ?? file.preview.rows.length }} /> : <pre>{file.parse_error ? text(file.parse_error) : file.preview?.text ?? '资料将在实际检索时解析；上传不等于解析成功。'}</pre>}</details></div>)}</div> : null}
-        {activeRun?.status === 'awaiting_input' && activeRun.pending_input ? <section className="clarification" aria-label="Agent 澄清问题"><strong>需要你的回复</strong><p>{activeRun.pending_input.question}</p><textarea aria-label="澄清回复" value={reply} onChange={event => setReply(event.target.value)} placeholder="说明你的选择或统计口径…" onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !composing.current && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); void submitReply(); } }} /><div className="composer-actions"><button className="text-button" disabled={busy} onClick={() => void cancel()}>停止任务</button><button className="primary-button" disabled={!reply.trim() || busy} onClick={() => void submitReply()}>回复并继续</button></div></section> : <>
+        {activeRun?.status === 'awaiting_input' && activeRun.pending_input ? <section className="clarification" aria-label="Agent 澄清问题"><strong>需要你的回复</strong><p>{activeRun.pending_input.question}</p><textarea aria-label="澄清回复" value={reply} onChange={event => setReply(event.target.value)} placeholder="说明你的选择或统计口径…" onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !composing.current && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); void submitReply(); } }} /><div className="composer-actions"><button className="text-button" disabled={busy} onClick={() => void cancel()}>停止任务</button><ModelPicker catalog={catalog} selection={activeRun.model_selection ?? selection} locked offline={health?.mode === 'offline'} onSelect={setSelection} onConfigure={configureProvider} /><button className="primary-button" disabled={!reply.trim() || busy} onClick={() => void submitReply()}>回复并继续</button></div></section> : <>
           {detail && detail.runs.some(run => run.status === 'completed') && !activeRun && <details className="context-selection"><summary>历史任务作为背景（已选 {selectedContexts.length}）</summary>{detail.runs.filter(run => run.status === 'completed').map(run => <label key={run.id}><input type="checkbox" checked={selectedContexts.includes(run.id)} disabled={selectedContexts.length >= 2 && !selectedContexts.includes(run.id)} onChange={event => { setContextsExplicit(true); setSelectedContexts(previous => event.target.checked ? [...previous, run.id] : previous.filter(id => id !== run.id)); }} />{run.task || run.id}</label>)}<small>最多选择两次历史任务作为背景，新任务会从原始 CSV 重新计算。</small></details>}
           <div className="composer"><textarea ref={taskInput} aria-label="任务说明" placeholder={activeRun ? '当前任务正在运行…' : hasCsv ? '描述你想完成的分析，或继续追问…' : '先添加一个 CSV，再输入分析任务…'} value={task} disabled={Boolean(activeRun)} onChange={event => setTask(event.target.value)} onPaste={event => { const files = Array.from(event.clipboardData.files); if (files.length) { event.preventDefault(); void uploadFiles(files); } }} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !composing.current && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); void submit(); } }} />
-            <div className="composer-actions"><button className="icon-button" aria-label="添加文件" title={frozen ? '更换输入请新建对话' : '添加 CSV 或资料'} disabled={busy || frozen} onClick={() => uploadInput.current?.click()}><Icon name="attach" /></button><span className="composer-hint">{frozen ? '输入已冻结 · 换文件请新建对话' : '拖入或粘贴文件 · Shift+Enter 换行'}</span>{activeRun ? <button className="send-button stop-button" aria-label="停止任务" disabled={busy || activeRun.status === 'cancelling'} onClick={() => void cancel()}><Icon name="stop" /></button> : <button className="send-button" aria-label="发送任务" disabled={busy || !task.trim() || !hasCsv} onClick={() => void submit()}><Icon name="arrow" /></button>}</div>
+            <div className="composer-actions"><button className="icon-button" aria-label="添加文件" title={frozen ? '更换输入请新建对话' : '添加 CSV 或资料'} disabled={busy || frozen} onClick={() => uploadInput.current?.click()}><Icon name="attach" /></button><span className="composer-hint">{frozen ? '输入已冻结 · 换文件请新建对话' : '拖入或粘贴文件 · Shift+Enter 换行'}</span><ModelPicker catalog={catalog} selection={selection} locked={modelLocked} offline={health?.mode === 'offline'} onSelect={setSelection} onConfigure={configureProvider} />{activeRun ? <button className="send-button stop-button" aria-label="停止任务" disabled={busy || activeRun.status === 'cancelling'} onClick={() => void cancel()}><Icon name="stop" /></button> : <button className="send-button" aria-label="发送任务" disabled={busy || !task.trim() || !hasCsv} onClick={() => void submit()}><Icon name="arrow" /></button>}</div>
           </div>
         </>}
         <input ref={uploadInput} className="visually-hidden" type="file" accept=".csv,.txt,.md,.pdf" multiple disabled={busy || frozen} aria-label="选择附件" onChange={event => { void uploadFiles(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
         <p className="composer-footnote">生成内容可能有误，请核对计算口径与实际成果。仅在全部交付核验后显示完成。</p>
       </div>
-    </main>
-    {panel && <ExecutionPanel events={events.length ? events : latestRun?.events ?? []} run={latestRun} onClose={() => setPanel(false)} onError={showError} />}
+    </main>}
+    {panel && page === 'chat' && <ExecutionPanel events={events.length ? events : latestRun?.events ?? []} run={latestRun} onClose={() => setPanel(false)} onError={showError} />}
     {dragging && <div className="drop-overlay"><Icon name="attach" /><strong>将文件放入当前对话</strong><span>一个 CSV，及可选 TXT / MD / PDF</span></div>}
   </div>;
 }

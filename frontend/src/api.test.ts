@@ -47,4 +47,10 @@ describe('protected local API', () => {
     await api.start('c', '任务');
     expect(JSON.parse(fetch.mock.calls[0][1].body)).not.toHaveProperty('context_run_ids');
   });
+
+  it('sends model identifiers without model credentials in the task request', async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 'r', status: 'running' }))); vi.stubGlobal('fetch', fetch);
+    await api.start('c', '任务', undefined, 'request-unique', { provider_id: 'deepseek', model_id: 'deepseek-v4-pro' });
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ task: '任务', request_id: 'request-unique', provider_id: 'deepseek', model_id: 'deepseek-v4-pro' });
+  });
 });

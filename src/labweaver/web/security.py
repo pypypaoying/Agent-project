@@ -51,6 +51,8 @@ def managed_path(root: Path, relative: str) -> Path:
 
 def secret_values(settings):
     values = [settings.token, os.environ.get("LLM_API_KEY", "")]
+    if getattr(settings, "model_config", None) is not None:
+        values.append(settings.model_config.api_key)
     if settings.mode == "live":
         from labweaver.config import load_config, ConfigurationError
         try:
@@ -73,5 +75,17 @@ def scrub(value, secrets):
 
 
 def contains_secret(value, secrets):
-    raw = value if isinstance(value, bytes) else json.dumps(value, ensure_ascii=False, default=str).encode()
-    return any(secret.encode() in raw for secret in secrets)
+    """Inspect original values; JSON escaping must not hide a credential."""
+    if isinstance(value, str):
+        return any(secret in value for secret in secrets)
+    if isinstance(value, dict):
+        return any(contains_secret(k, secrets) or contains_secret(v, secrets) for k, v in value.items())
+    if isinstance(value, (list, tuple)):
+        return any(contains_secret(item, secrets) for item in value)
+    if isinstance(value, bytes):
+        # Registered artifacts can already contain serialized JSON strings.
+        return any(secret.encode() in value or
+                   json.dumps(secret, ensure_ascii=False)[1:-1].encode() in value or
+                   json.dumps(secret, ensure_ascii=True)[1:-1].encode() in value
+                   for secret in secrets)
+    return contains_secret(str(value), secrets)

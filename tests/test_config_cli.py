@@ -4,7 +4,7 @@ import json
 import pytest
 
 from labweaver.cli import main
-from labweaver.config import ConfigurationError, load_config
+from labweaver.config import ConfigurationError, ModelConfig, create_model, load_config
 from labweaver.runtime.records import save_run
 
 
@@ -61,6 +61,23 @@ def test_config_reads_selected_file_without_mutating_environment(tmp_path, monke
     assert "LLM_API_KEY" not in os.environ
     monkeypatch.setenv("LLM_MODEL_ID", "environment-model")
     assert load_config(env).model_id == "environment-model"
+
+
+@pytest.mark.parametrize("url,model,disabled", [
+    ("https://api.deepseek.com", "deepseek-flash", True),
+    ("https://api.deepseek.com/v1", "deepseek-v4-pro", True),
+    ("https://api.deepseek.com", "deepseek-v4-flash", True),
+    ("https://api.deepseek.com.evil.invalid/v1", "deepseek-flash", False),
+    ("http://127.0.0.1:9000/v1", "deepseek-flash", False),
+    ("https://models.example.invalid/v1", "other-model", False),
+])
+def test_official_deepseek_tool_adapter_disables_unsupported_reasoning_round_trip(url, model, disabled, monkeypatch):
+    import langchain_openai
+    monkeypatch.setattr(langchain_openai, "ChatOpenAI", lambda **options: options)
+    options = create_model(ModelConfig(model, url, "private-model-canary"), max_tokens=4096)
+    assert options["model"] == model and options["base_url"] == url
+    assert options["max_tokens"] == 4096 and options["max_retries"] == 0
+    assert options.get("extra_body") == ({"thinking":{"type":"disabled"}} if disabled else None)
 
 
 @pytest.mark.parametrize("timeout", ["nan", "inf", "0", "121", "invalid"])

@@ -50,7 +50,7 @@ def test_initial_migration_is_persistent_and_uses_wal_foreign_keys(store):
     assert reopened.app_id == store.app_id
     assert reopened.require("conversations", conversation["id"])["title"] == "实际分析"
     with reopened.connect() as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 2
         assert db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert db.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert db.execute("PRAGMA foreign_key_check").fetchall() == []
@@ -65,6 +65,24 @@ def test_unknown_schema_is_rejected_without_resetting_user_history(store):
     assert error.value.code == "schema_version"
     with sqlite3.connect(store.path) as db:
         assert db.execute("SELECT title FROM conversations WHERE id=?", (conversation["id"],)).fetchone()[0] == "保留历史"
+
+
+def test_v1_upgrade_preserves_history_and_adds_model_bindings(tmp_path):
+    root = tmp_path / "old-application"
+    root.mkdir()
+    conversation_id, app_id = uid(), uid()
+    source = Path(__file__).parents[1] / "src/labweaver/web/migrations/001.sql"
+    with sqlite3.connect(root / "history.sqlite3") as db:
+        db.executescript(source.read_text(encoding="utf-8"))
+        db.execute("INSERT INTO conversations VALUES (?,?,?,?,?)", (conversation_id, "旧对话", now(), now(), 0))
+        db.execute("INSERT INTO app_meta VALUES ('app_id',?)", (app_id,))
+    upgraded = Store(root)
+    assert upgraded.app_id == app_id
+    assert upgraded.require("conversations", conversation_id)["title"] == "旧对话"
+    with upgraded.connect() as db:
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert db.execute("SELECT count(*) FROM conversation_models").fetchone()[0] == 0
+        assert db.execute("SELECT count(*) FROM run_models").fetchone()[0] == 0
 
 
 def test_run_request_uniqueness_is_scoped_to_conversation(store):

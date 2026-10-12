@@ -7,7 +7,7 @@ import type { ConversationDetail } from './types';
 
 vi.mock('./api', () => ({
   ApiError: class extends Error {},
-  api: { health: vi.fn(), conversations: vi.fn(), createConversation: vi.fn(), conversation: vi.fn(), upload: vi.fn(), removeFile: vi.fn(), start: vi.fn(), run: vi.fn(), reply: vi.fn(), cancel: vi.fn(), preview: vi.fn(), blob: vi.fn() },
+  api: { health: vi.fn(), providers: vi.fn(), saveProvider: vi.fn(), defaultProvider: vi.fn(), refreshProviderModels: vi.fn(), testProvider: vi.fn(), conversations: vi.fn(), createConversation: vi.fn(), conversation: vi.fn(), upload: vi.fn(), removeFile: vi.fn(), start: vi.fn(), run: vi.fn(), reply: vi.fn(), cancel: vi.fn(), preview: vi.fn(), blob: vi.fn() },
   streamEvents: vi.fn(), downloadFile: vi.fn(),
 }));
 
@@ -16,6 +16,7 @@ const withCsv = (): ConversationDetail => ({ ...empty(), files: [{ id: 'f', name
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(api.health).mockResolvedValue({ mode: 'offline' });
+  vi.mocked(api.providers).mockResolvedValue({ providers: [{ id: 'deepseek', name: 'DeepSeek', kind: 'preset', base_url: 'https://api.deepseek.com', models: ['deepseek-flash', 'deepseek-v4-pro'], default_model_id: 'deepseek-flash', has_key: true, revision: 1 }], default_provider_id: 'deepseek', default_model_id: 'deepseek-flash' });
   vi.mocked(api.conversations).mockResolvedValue({ conversations: [{ id: 'c', title: '问卷分析' }] });
   vi.mocked(api.createConversation).mockResolvedValue({ id: 'c', title: '新对话' });
   vi.mocked(api.conversation).mockResolvedValue(empty());
@@ -209,5 +210,30 @@ describe('real-data chat interface', () => {
     expect(within(progress).getByText('执行中')).toBeVisible();
     expect(screen.queryByRole('complementary', { name: '执行面板' })).not.toBeInTheDocument();
     expect(progress).not.toHaveTextContent('never print entire code here');
+  });
+
+  it('sends the selected live model on a new task without changing the frozen CSV', async () => {
+    vi.mocked(api.health).mockResolvedValue({ mode: 'live' });
+    await open({ ...withCsv(), conversation: { id: 'c', title: '问卷分析', frozen: true }, runs: [{ id: 'old', task: '上次任务', status: 'completed' }] });
+    await userEvent.click(screen.getByRole('button', { name: '选择模型' }));
+    await userEvent.click(screen.getByRole('menuitemradio', { name: 'deepseek-v4-pro' }));
+    await userEvent.type(screen.getByRole('textbox', { name: '任务说明' }), '继续概览');
+    vi.mocked(api.start).mockResolvedValue({ id: 'new', status: 'running' });
+    await userEvent.click(screen.getByRole('button', { name: '发送任务' }));
+    await waitFor(() => expect(api.start).toHaveBeenCalledWith('c', '继续概览', undefined, expect.any(String), { provider_id: 'deepseek', model_id: 'deepseek-v4-pro' }));
+    expect(api.createConversation).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: '添加文件' })).toBeDisabled();
+  });
+
+  it('keeps API keys only in the settings form and clears them after returning to chat', async () => {
+    await open();
+    await userEvent.click(screen.getByRole('button', { name: '设置' }));
+    expect(screen.getByRole('textbox', { name: 'Base URL' })).toHaveValue('https://api.deepseek.com');
+    await userEvent.type(screen.getByLabelText('API Key', { exact: true }), 'temporary-private-key');
+    await userEvent.click(screen.getByRole('button', { name: '返回聊天' }));
+    await userEvent.click(screen.getByRole('button', { name: '设置' }));
+    expect(screen.getByLabelText('API Key', { exact: true })).toHaveValue('');
+    expect(JSON.stringify(sessionStorage)).not.toContain('temporary-private-key');
+    expect(JSON.stringify(localStorage)).not.toContain('temporary-private-key');
   });
 });

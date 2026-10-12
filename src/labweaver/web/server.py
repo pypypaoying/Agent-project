@@ -22,7 +22,7 @@ def serve(args):
     health = app.state.manager.health()
     print(f"LabWeaver Desktop: http://127.0.0.1:{args.port} | mode={settings.mode}", flush=True)
     if not health["model"]["ready"]:
-        print("模型配置未就绪。可浏览历史；分析前请配置后端 .env。", flush=True)
+        print("模型配置未就绪。可浏览历史；分析前请在设置页面配置服务商与 API Key。", flush=True)
     if not health["docker"]["ready"]:
         print("Docker/分析镜像未就绪。代码分析没有宿主 Python 降级路径。", flush=True)
     if args.open:

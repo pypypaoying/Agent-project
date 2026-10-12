@@ -1,4 +1,4 @@
-import type { Conversation, ConversationDetail, ManagedFile, Run, RunEvent, TablePreview } from './types';
+import type { Conversation, ConversationDetail, ManagedFile, ModelSelection, Provider, ProviderCatalog, ProviderKeyUpdate, ProviderUpdate, Run, RunEvent, TablePreview } from './types';
 
 const TOKEN_KEY = 'labweaver.application-token';
 let accessToken = '';
@@ -45,6 +45,11 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
 const json = (body: unknown): RequestInit => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 export const api = {
   health: () => request<Record<string, unknown>>('/health'),
+  providers: () => request<ProviderCatalog>('/settings/providers'),
+  saveProvider: (id: string | null, values: ProviderUpdate | ProviderKeyUpdate) => request<Provider>(id ? `/settings/providers/${encodeURIComponent(id)}` : '/settings/providers', { ...json(values), method: id ? 'PUT' : 'POST' }),
+  defaultProvider: (selection: ModelSelection) => request<ProviderCatalog>('/settings/providers/default', json(selection)),
+  refreshProviderModels: (id: string) => request<{ models: string[] }>(`/settings/providers/${encodeURIComponent(id)}/models/refresh`, json({})),
+  testProvider: (id: string, model: string) => request<{ ok: boolean; model_id: string; tool_call_supported?: boolean }>(`/settings/providers/${encodeURIComponent(id)}/test`, json({ model_id: model })),
   conversations: () => request<{ conversations: Conversation[] }>('/conversations'),
   createConversation: () => request<Conversation>('/conversations', json({})),
   conversation: (id: string) => request<ConversationDetail>(`/conversations/${encodeURIComponent(id)}`),
@@ -53,7 +58,7 @@ export const api = {
     return request<ManagedFile>(`/conversations/${encodeURIComponent(id)}/files`, { method: 'POST', body: form });
   },
   removeFile: (conversation: string, file: string) => request<void>(`/conversations/${encodeURIComponent(conversation)}/files/${encodeURIComponent(file)}`, { method: 'DELETE' }),
-  start: (id: string, task: string, context?: string[], requestId: string = crypto.randomUUID()) => request<Run>(`/conversations/${encodeURIComponent(id)}/runs`, json({ task, request_id: requestId, ...(context === undefined ? {} : { context_run_ids: context }) })),
+  start: (id: string, task: string, context?: string[], requestId: string = crypto.randomUUID(), selection?: ModelSelection) => request<Run>(`/conversations/${encodeURIComponent(id)}/runs`, json({ task, request_id: requestId, ...(context === undefined ? {} : { context_run_ids: context }), ...(selection ?? {}) })),
   run: (id: string) => request<Run>(`/runs/${encodeURIComponent(id)}`),
   reply: (id: string, pending: string, reply: string, requestId: string = crypto.randomUUID()) => request<Run>(`/runs/${encodeURIComponent(id)}/reply`, json({ reply, question_id: pending, request_id: requestId })),
   cancel: (id: string) => request<Run>(`/runs/${encodeURIComponent(id)}/cancel`, json({})),

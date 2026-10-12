@@ -15,6 +15,7 @@ from .files import MEDIA, file_view, import_file, read_registered
 from .security import AppError, contains_secret, digest, managed_path, scrub, secret_values
 from .store import Store, encode, now, uid
 from .worker import agent_worker
+from .providers import ProviderRegistry
 
 TERMINAL = {"completed", "error", "cancelled", "interrupted"}
 ACTIVE = {"running", "awaiting_input", "cancelling"}
@@ -55,6 +56,8 @@ class Runtime:
     def __init__(self, settings, app_id, conversation_id, csv_path, materials, context, target):
         ctx = mp.get_context("spawn")
         self.conversation_id, self.run_id = conversation_id, None
+        self.model_config = settings.model_config
+        self.selection_key = None
         self.commands, self.events, self.cancel_signal = ctx.Queue(), ctx.Queue(), ctx.Event()
         self.process = ctx.Process(target=target, args=(settings, app_id, csv_path, materials, context,
                                                      self.commands, self.events, self.cancel_signal), daemon=False)
@@ -92,11 +95,12 @@ class TaskManager:
         # Use the canonical storage root in workers, export registration and
         # their temporary directories; nominal AppData may be virtualized.
         self.settings = replace(settings, data_dir=self.store.root)
+        self.providers = ProviderRegistry(self.store, self.settings)
         self.lock = threading.RLock()
         self.active = None
         self.runtime = None
         self.closed = False
-        self.secrets = secret_values(settings)
+        self.secrets = tuple(set(secret_values(settings)) | set(self.providers.secret_values()))
         self._health = None
         # Recover metadata only. Never restore an interrupted graph or auto-run a task.
         with self.store.connect() as db:
@@ -113,14 +117,11 @@ class TaskManager:
 
     def health(self, *, refresh=False):
         if self._health is None or refresh:
-            model = {"ready": self.settings.mode == "offline"}
-            if self.settings.mode == "live":
-                from labweaver.config import load_config, ConfigurationError
-                try:
-                    load_config(self.settings.env_file, use_default_env=False)
-                    model = {"ready": True}
-                except ConfigurationError:
-                    model = {"ready": False, "error": "请在后端 .env 或本地配置引用中设置 LLM_API_KEY、LLM_BASE_URL、LLM_MODEL_ID。"}
+            catalog = self.providers.list()
+            model = {"ready": self.settings.mode == "offline" or any(p["has_key"] and p["models"] for p in catalog["providers"]),
+                     "default_provider_id": catalog["default_provider_id"], "default_model_id": catalog["default_model_id"]}
+            if not model["ready"]:
+                model["error"] = "请在设置页面配置服务商、API Key 和模型，也可沿用已有后端 .env。"
             from labweaver.runtime.execution import DockerExecutor, ExecutionConfig, ExecutionError
             try:
                 executor = DockerExecutor(ExecutionConfig(image=self.settings.image))
@@ -130,6 +131,56 @@ class TaskManager:
                 docker = {"ready": False, "error": {"code": exc.code, "message": str(exc)}}
             self._health = {"mode": self.settings.mode, "model": model, "docker": docker}
         return self._health | {"active_run_id": self.active}
+
+    def _refresh_secrets(self):
+        # Retain old keys in memory for delayed events from an old worker.
+        self.secrets = tuple(set(self.secrets) | set(self.providers.secret_values()))
+        self._health = None
+
+    def configure_provider(self, provider_id, payload):
+        with self.lock:
+            if self.active:
+                raise AppError("task_active", "请完成当前任务或停止后再修改服务商配置。", 409)
+            if contains_secret({k: v for k, v in payload.items() if k != "api_key"}, self.secrets):
+                raise AppError("secret_in_provider", "公开服务商字段不能包含敏感配置。")
+            result = self.providers.upsert(provider_id, payload)
+            self._refresh_secrets()
+            return result
+
+    def configure_default(self, provider_id, model_id):
+        with self.lock:
+            if self.active:
+                raise AppError("task_active", "请完成当前任务或停止后再切换默认模型。", 409)
+            result = self.providers.set_default(provider_id, model_id)
+            self._refresh_secrets()
+            return result
+
+    def _model_for_task(self, conversation_id, provider_id, model_id):
+        if (provider_id is None) != (model_id is None):
+            raise AppError("model_selection_invalid", "请同时指定服务商和模型。")
+        if self.settings.mode == "offline":
+            if provider_id is not None:
+                raise AppError("offline_model_selection", "离线演示不调用在线服务商；请使用在线模式切换模型。")
+            return {"provider_id": "offline", "provider_name": "离线演示", "model_id": "deterministic-demo", "base_url": ""}, None, 0
+        catalog = self.providers.list()
+        if provider_id is None:
+            with self.store.connect() as db:
+                stored = db.execute("SELECT selection_json FROM conversation_models WHERE conversation_id=?", (conversation_id,)).fetchone()
+            selected = json.loads(stored[0]) if stored else None
+            if selected and any(p["id"] == selected["provider_id"] for p in catalog["providers"]):
+                provider_id, model_id = selected["provider_id"], selected["model_id"]
+            else:
+                provider_id, model_id = catalog["default_provider_id"], catalog["default_model_id"]
+                default = next(p for p in catalog["providers"] if p["id"] == provider_id)
+                # Backward-compatible old API clients may still rely on a non-DeepSeek .env.
+                if not default["has_key"]:
+                    legacy = next((p for p in catalog["providers"] if p["kind"] == "env" and p["has_key"]), None)
+                    if legacy:
+                        provider_id, model_id = legacy["id"], legacy["default_model_id"]
+        config = self.providers.resolve(provider_id, model_id)
+        provider = next(p for p in catalog["providers"] if p["id"] == provider_id)
+        self.secrets = tuple(set(self.secrets) | {config.api_key})
+        return {"provider_id": provider_id, "provider_name": provider["name"], "model_id": model_id, "base_url": config.base_url}, config, provider["revision"]
 
     def upload(self, conversation_id, name, raw):
         with self.lock:
@@ -149,7 +200,7 @@ class TaskManager:
             db.execute("DELETE FROM files WHERE id=?", (file_id,))
         managed_path(self.store.root, file["relative_path"]).unlink(missing_ok=True)
 
-    def start(self, conversation_id, task, request_id, context_ids=None):
+    def start(self, conversation_id, task, request_id, context_ids=None, provider_id=None, model_id=None):
         with self.lock:
             if contains_secret(task, self.secrets):
                 raise AppError("secret_in_input", "任务包含敏感配置，拒绝保存。")
@@ -159,6 +210,11 @@ class TaskManager:
                 if previous:
                     if previous["task"] != task:
                         raise AppError("request_reused", "请求 ID 已用于不同任务。", 409)
+                    if provider_id is not None or model_id is not None:
+                        prior = db.execute("SELECT selection_json FROM run_models WHERE run_id=?", (previous["id"],)).fetchone()
+                        selection = json.loads(prior[0]) if prior else {}
+                        if selection.get("provider_id") != provider_id or selection.get("model_id") != model_id:
+                            raise AppError("request_reused", "请求 ID 已用于不同模型的任务。", 409)
                     return self.run_view(previous["id"])
                 bound = [dict(r) for r in db.execute("SELECT f.*,cf.role FROM files f JOIN conversation_files cf ON cf.file_id=f.id WHERE cf.conversation_id=? ORDER BY cf.position", (conversation_id,))]
             if self.active:
@@ -169,10 +225,12 @@ class TaskManager:
             for file in bound:
                 read_registered(self.store, file["id"])
             context, selected_ids = history_context(self.store, conversation_id, context_ids)
-            if self.settings.mode == "live" and not self.health()["model"]["ready"]:
-                raise AppError("model_not_ready", "后端模型配置未就绪。", 503)
+            selection, model_config, revision = self._model_for_task(conversation_id, provider_id, model_id)
+            selection_key = (selection["provider_id"], selection["model_id"], revision)
             # Refresh a completed runtime only when changing conversations or selecting history explicitly.
-            if self.runtime and (not self.runtime.process.is_alive() or self.runtime.conversation_id != conversation_id or context_ids is not None):
+            if self.runtime and (not self.runtime.process.is_alive() or self.runtime.conversation_id != conversation_id or context_ids is not None
+                                 or getattr(self.runtime, "selection_key", None) != selection_key
+                                 or getattr(self.runtime, "model_config", None) != model_config):
                 self.runtime.stop()
                 self.runtime = None
             id, timestamp = uid(), now()
@@ -183,14 +241,19 @@ class TaskManager:
                            (uid(), conversation_id, id, "user", task, "sent", timestamp, request_id))
                 title = task[:40] if conversation["title"] == "新对话" else conversation["title"]
                 db.execute("UPDATE conversations SET frozen=1,title=?,updated_at=? WHERE id=?", (title, timestamp, conversation_id))
+                db.execute("INSERT INTO run_models VALUES (?,?)", (id, encode(selection)))
+                db.execute("INSERT INTO conversation_models VALUES (?,?) ON CONFLICT(conversation_id) DO UPDATE SET selection_json=excluded.selection_json", (conversation_id, encode(selection)))
             self.active = id
-            self.emit(id, "running", {"status": "running", "history_run_ids": selected_ids})
+            self.emit(id, "running", {"status": "running", "history_run_ids": selected_ids, "model_selection": selection})
             try:
                 if self.runtime is None:
-                    self.runtime = Runtime(self.settings, self.store.app_id, conversation_id,
+                    runtime_settings = replace(self.settings, model_config=model_config)
+                    self.runtime = Runtime(runtime_settings, self.store.app_id, conversation_id,
                                            managed_path(self.store.root, csv["relative_path"]),
                                            [managed_path(self.store.root, f["relative_path"]) for f in bound if f["role"] == "material"],
                                            context, self.worker_target)
+                    self.runtime.selection_key = selection_key
+                    self.runtime.model_config = model_config
                     threading.Thread(target=self._listen, args=(self.runtime,), daemon=True).start()
                 self.runtime.run_id = id
                 self.runtime.cancel_signal.clear()
@@ -541,12 +604,13 @@ class TaskManager:
                 files = [file_view(dict(f)) | {"name": f["artifact_name"]} for f in db.execute("SELECT f.*,af.name AS artifact_name FROM files f JOIN artifact_files af ON af.file_id=f.id WHERE af.artifact_id=?", (item["id"],))]
                 artifacts.append({k: meta[k] for k in ("kind", "label", "row_count", "columns", "value", "preview") if k in meta} | {"id": item["id"], "files": files})
             downloads = [file_view(dict(f)) for f in db.execute("SELECT * FROM files WHERE run_id=? AND category='generated'", (run_id,))]
+            model = db.execute("SELECT selection_json FROM run_models WHERE run_id=?", (run_id,)).fetchone()
         return {k: run[k] for k in ("id", "conversation_id", "task", "status", "created_at", "updated_at", "core_session_id", "core_task_id")} | {
             "error": json.loads(run["error_json"] or "null"), "pending_input": json.loads(run["pending_json"] or "null"),
             "final_answer": report.get("final_answer", ""), "artifacts": artifacts, "downloads": downloads,
             "task_plan": report.get("task_plan", []), "model_calls": report.get("model_calls", 0),
             "analysis_model_calls": report.get("analysis_model_calls", 0), "events": self.all_events(run_id),
-            "history_run_ids": json.loads(run["context_ids"])}
+            "history_run_ids": json.loads(run["context_ids"]), "model_selection": json.loads(model[0]) if model else None}
 
     def all_events(self, run_id):
         rows, after = [], 0
@@ -563,7 +627,8 @@ class TaskManager:
             files = [file_view(dict(r)) for r in db.execute("SELECT f.*,cf.role FROM files f JOIN conversation_files cf ON f.id=cf.file_id WHERE cf.conversation_id=? ORDER BY cf.position", (conversation_id,))]
             messages = [dict(r) for r in db.execute("SELECT id,run_id,role,content,state,question_id,created_at FROM messages WHERE conversation_id=? ORDER BY created_at", (conversation_id,))]
             run_ids = [r["id"] for r in db.execute("SELECT id FROM runs WHERE conversation_id=? ORDER BY created_at", (conversation_id,))]
-        return dict(conversation=conversation, files=files, messages=messages, runs=[self.run_view(id) for id in run_ids])
+            model = db.execute("SELECT selection_json FROM conversation_models WHERE conversation_id=?", (conversation_id,)).fetchone()
+        return dict(conversation=conversation, files=files, messages=messages, runs=[self.run_view(id) for id in run_ids], model_selection=json.loads(model[0]) if model else None)
 
     def close(self):
         with self.lock:

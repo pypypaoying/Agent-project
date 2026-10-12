@@ -2,7 +2,7 @@
 
 ## Windows 本地聊天界面
 
-浏览器应用需要先完成下面的 Docker 与模型配置。首次安装额外需要 Node.js 构建前端；日常运行只使用 Python 服务和构建后的页面，不启动 Vite，也不自动安装 Docker 或分析依赖。
+浏览器应用需要先完成下面的 Docker 配置，模型可通过页面设置配置。首次安装额外需要 Node.js 构建前端；日常运行只使用 Python 服务和构建后的页面，不启动 Vite，也不自动安装 Docker 或分析依赖。
 
 ```powershell
 uv sync --locked --extra web
@@ -32,6 +32,22 @@ uv run --frozen --no-sync --extra web labweaver serve --open
 2026-10-12 更新增大了常用文字和图标。已运行的服务需重启并刷新页面才能使用更新后的界面和路径修复；过去失败的任务不会自动重跑，可在历史中按原任务重新执行。
 
 离线公开演示可使用 `labweaver serve --offline --open`，分析仍需要真实 Docker；确定性模型只支持有限示例。搜索、重命名/删除管理、工作空间、独立知识库与桌面安装包留待 P2–P4。详细架构见 [Desktop](desktop.md)。
+
+## 模型选择与服务商配置
+
+输入框右下角、发送按钮左侧是模型选择器，按服务商分组展示。新用户默认 DeepSeek；点击未配置的模型会进入配置页。每次任务和历史卡片记录实际选择的服务商与模型。切换模型会在下一项任务重建 Agent 运行时，并把已核验的最近历史作为背景；CSV 和资料绑定保持当前对话的输入。运行中或等待澄清时不能切换，回复继续使用原任务模型。
+
+1. 点击左下角 **设置**，选择 DeepSeek，或点击 **添加兼容供应商**。
+2. 填写服务商名称、API 根地址 **Base URL**、**API Key**；模型列表每行一个实际模型 ID，默认模型必须包含在列表里。地址应来自服务商 API 文档，不能填写聊天网页、密钥、查询参数或用户名。首版支持 OpenAI **Chat Completions** 兼容接口，不支持原生 Anthropic 协议。
+3. 点击 **保存配置**。Key 留空保留已有凭据；勾选“保存时清除现有密钥”才会移除。返回页面后不会回显密钥。
+4. 可点击 **获取模型列表**或 **测试连接**。两者只向保存的接口发送专用请求，不发送 CSV、任务或资料。连接成功和工具调用验证分别展示，不代表已经证明任意分析任务可完成。接口不支持列表或返回超过 50 个模型时，手动维护需要的模型即可。
+5. 返回聊天，在右下角选择模型后发送任务。**设为应用默认**影响默认选择；重新打开历史仍显示该对话上次使用的模型。
+
+DeepSeek 预置 Base URL 为 `https://api.deepseek.com`，模型为 `deepseek-flash`、`deepseek-v4-pro`，默认前者，按[官方 API 文档](https://api-docs.deepseek.com/api/create-chat-completion/)核对。当前 ChatOpenAI 适配器不会回传 DeepSeek 的 `reasoning_content`，因此仅对官方接口的这些模型禁用 thinking，确保连续工具调用兼容；其他兼容服务商不注入此参数。[DeepSeek 工具调用要求](https://api-docs.deepseek.com/guides/thinking_mode/)
+
+Windows 新 Key 加密保存在本机应用数据目录，只能由当前 Windows 用户解密，不进入 SQLite、聊天、执行记录或容器。非 Windows 本轮仅在后端内存保存新 Key，重启服务后需重新填写；不会退回明文文件。设置页会说明实际保存方式。浏览器只在输入和保存请求中短暂持有新 Key，不保存到 localStorage/sessionStorage，保存后清空字段。
+
+已有后端配置继续兼容：官方 DeepSeek 配置作为预置服务商的环境引用；其他配置显示为“现有本地配置”，公开地址和模型只读。修改环境引用的接口地址后不会把原环境 Key 发往新地址。需要修改只读配置时可以新增服务商；CLI 和 VS Code 入口继续使用原 `.env`/TOML 配置，不读取桌面服务商设置。离线演示锁定选择器并显示“离线演示”，不假装调用在线模型。
 
 ## Windows / VS Code
 

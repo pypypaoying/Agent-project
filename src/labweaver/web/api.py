@@ -10,7 +10,7 @@ from fastapi import FastAPI, File, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.sse import EventSourceResponse, ServerSentEvent
-from pydantic import BaseModel, ConfigDict, Field, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
 
 from .files import preview_artifact, read_registered
 from .manager import ACTIVE, TaskManager
@@ -29,6 +29,26 @@ class NewRun(Payload):
     task: StrictStr = Field(min_length=1, max_length=32000)
     request_id: StrictStr = Field(min_length=8, max_length=80)
     context_run_ids: list[StrictStr] | None = Field(default=None, max_length=2)
+    provider_id: StrictStr | None = Field(default=None, min_length=1, max_length=80)
+    model_id: StrictStr | None = Field(default=None, min_length=1, max_length=128)
+
+
+class ProviderUpdate(Payload):
+    name: StrictStr | None = Field(default=None, min_length=1, max_length=80)
+    base_url: StrictStr | None = Field(default=None, min_length=1, max_length=2048)
+    models: list[StrictStr] | None = Field(default=None, min_length=1, max_length=50)
+    default_model_id: StrictStr | None = Field(default=None, min_length=1, max_length=128)
+    api_key: StrictStr | None = Field(default=None, max_length=8192)
+    clear_key: StrictBool = False
+
+
+class ModelSelection(Payload):
+    provider_id: StrictStr = Field(min_length=1, max_length=80)
+    model_id: StrictStr = Field(min_length=1, max_length=128)
+
+
+class ProviderTest(Payload):
+    model_id: StrictStr = Field(min_length=1, max_length=128)
 
 
 class Reply(Payload):
@@ -100,6 +120,57 @@ def create_app(settings, *, manager=None):
     def health(refresh: bool = False):
         return service.health(refresh=refresh)
 
+    @app.get("/api/v1/settings/providers")
+    def providers():
+        return service.providers.list()
+
+    @app.post("/api/v1/settings/providers", status_code=201)
+    def new_provider(body: ProviderUpdate):
+        return service.configure_provider(None, body.model_dump(exclude_none=True))
+
+    @app.put("/api/v1/settings/providers/{provider_id}")
+    def update_provider(provider_id: str, body: ProviderUpdate):
+        return service.configure_provider(provider_id, body.model_dump(exclude_none=True))
+
+    @app.post("/api/v1/settings/providers/default")
+    def default_provider(body: ModelSelection):
+        reject_secret(body.model_dump())
+        return service.configure_default(body.provider_id, body.model_id)
+
+    @app.post("/api/v1/settings/providers/{provider_id}/models/refresh")
+    def provider_models(provider_id: str):
+        from .provider_http import fetch_models
+        with service.lock:
+            if service.active:
+                raise AppError("task_active", "请完成当前任务或停止后再刷新模型。", 409)
+            old = next((p for p in service.providers.list()["providers"] if p["id"] == provider_id), None)
+            if old is None:
+                raise AppError("provider_not_found", "服务商不存在。", 404)
+            if old["kind"] == "env":
+                raise AppError("env_provider_read_only", "环境配置的模型列表为只读，请新增自定义服务商。", 409)
+            config = service.providers.resolve(provider_id, None)
+        models = fetch_models(config)
+        with service.lock:
+            if service.active:
+                raise AppError("task_active", "任务已开始，未更新模型列表。请完成当前任务后重试。", 409)
+            current = next(p for p in service.providers.list()["providers"] if p["id"] == provider_id)
+            if current["revision"] != old["revision"]:
+                raise AppError("provider_changed", "服务商配置已更改，未覆盖新的配置，请重试。", 409)
+            reject_secret(models)
+            selected = old["default_model_id"] if old["default_model_id"] in models else models[0]
+            service.configure_provider(provider_id, {"models": models, "default_model_id": selected})
+            return {"models": models}
+
+    @app.post("/api/v1/settings/providers/{provider_id}/test")
+    def provider_test(provider_id: str, body: ProviderTest):
+        from .provider_http import test_connection
+        reject_secret(body.model_dump())
+        with service.lock:
+            if service.active:
+                raise AppError("task_active", "请完成当前任务或停止后再测试连接。", 409)
+            config = service.providers.resolve(provider_id, body.model_id)
+        return test_connection(config)
+
     @app.get("/api/v1/conversations")
     def conversations():
         return {"conversations": service.store.conversations()}
@@ -136,7 +207,7 @@ def create_app(settings, *, manager=None):
         reject_secret(body.model_dump())
         if not body.task.strip():
             raise AppError("empty_task", "任务不能为空。")
-        return service.start(conversation_id, body.task.strip(), body.request_id, body.context_run_ids)
+        return service.start(conversation_id, body.task.strip(), body.request_id, body.context_run_ids, body.provider_id, body.model_id)
 
     @app.get("/api/v1/runs/{run_id}")
     def run(run_id: str):

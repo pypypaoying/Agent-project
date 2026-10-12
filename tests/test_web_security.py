@@ -125,6 +125,15 @@ def test_artifact_bytes_containing_key_are_detected():
     assert not contains_secret(b"id,value\n001,2\n", (secret,))
 
 
+@pytest.mark.parametrize("secret", ['canary-key-"quoted"', r"canary-key-\backslash", 'canary-key-中文'])
+def test_json_escaping_cannot_hide_secrets_in_fields_or_serialized_artifacts(secret):
+    original = {f"field:{secret}": [{"message": f"prefix {secret} suffix"}]}
+    assert contains_secret(original, (secret,))
+    for ascii_only in (False, True):
+        assert contains_secret(json.dumps(original, ensure_ascii=ascii_only).encode(), (secret,))
+    assert not contains_secret(scrub(original, (secret,)), (secret,))
+
+
 def test_known_credentials_include_selected_env_file_without_environment_mutation(tmp_path, monkeypatch):
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     monkeypatch.delenv("LLM_MODEL_ID", raising=False)

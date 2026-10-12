@@ -127,6 +127,8 @@ stateDiagram-v2
 | `artifacts` | run、核心产物 ID、种类、标签、来源、预览/口径 | 归属与源哈希校验；不能用历史 ID 完成本轮交付 |
 | `artifact_files` | artifact、文件 ID、用途、实际大小/SHA-256 | 文件协议白名单与归属约束 |
 | `run_events` | run、递增 seq、type、role、UTC 时间、JSON payload | `(run_id, seq)` 唯一；事件严格 JSON |
+| `conversation_models` | 对话最近一次实际选择的服务商/模型公共快照 | 对话外键；不保存 Key |
+| `run_models` | 每运行的实际服务商、模型、Base URL 公共快照 | 运行外键；历史选择不随设置编辑变化 |
 
 文件系统与 SQLite 不构成共同事务：先由现有 `save()` 排他写入并校验，再短事务登记执行、文件、产物、最终消息和终态。任一步失败不发送 `completed`。启动检查中断记录与其目录；可验证的部分文件保留，未登记文件不能通过下载 API 访问。后续 P2 增加清理和引用计数，不用静默删除历史来解决容量问题。
 
@@ -161,6 +163,26 @@ SSE 先持久化再发送。连接中断不会取消或重跑，重连从已知�
 - 后端只暴露安全配置状态。原始 SDK 异常、完整认证头和凭证不进入事件、SQLite、报告或前端；密钥哨兵测试覆盖所有公开/持久化通道。
 - 生成代码仍仅在现有无网络、非 root、只读根、cap-drop、2 CPU/1 GiB、128 MiB 工作区 Docker 内执行。API 工作进程只编排 Agent，不提供宿主 Python 执行降级。
 - 私人 CSV、资料、运行记录、数据库、API 配置、生成代码和图片不进入 Git；CI 仅用公开合成数据和确定性模型，计算必须实际在 Docker 中执行。
+
+### 服务商与模型设置
+
+桌面输入框右下角提供模型选择器，左侧设置入口提供服务商配置。`web/providers.py` 管理公共配置和运行解析，`credentials.py` 管理后端凭据，`provider_http.py` 只处理用户主动发起的模型列表/连接探测。公共服务商配置保存在既有 `app_meta` 的版本化 JSON 中；SQLite 迁移 002 增加对话和运行的选择快照，保留版本 1 的历史数据。凭据不放入数据库。
+
+默认预置 DeepSeek，兼容自定义 OpenAI Chat Completions 接口。官方 DeepSeek 既有配置通过环境引用使用；其他既有接口保留独立只读环境项。地址验证拒绝 userinfo、查询参数、片段和控制字符；HTTP 探测不跟随重定向、限制响应大小和等待时间，不返回原始服务商错误。刷新网络请求不持任务管理全局锁，写回前重新检查活动任务与配置修订号。
+
+新 Key 为只写字段，公开接口仅返回是否配置和保存方式。Windows 使用当前用户 DPAPI 保护的独立文件，非 Windows 暂为后端会话内存；不保存明文或 Key 哈希。空 Key 保留已有凭据，显式清除才删除；公开字段禁止包含应用令牌或模型 Key，防泄漏检查递归检查原始字符串，避免 JSON 转义绕过。
+
+任务提交可携带 `provider_id/model_id`。Manager 在创建工作进程前解析真实 `ModelConfig`，两个 Agent 都通过这个配置创建模型；应用设置、密钥修订或模型变化时，在下一任务重新建 Runtime 并重建已核验的有限历史。运行中和等待澄清时锁定模型选择及配置编辑，恢复节点沿用原任务模型。模型 ID、地址和 Key 不由 Agent 工具改变，模型凭据不进入 Docker。旧 API 客户端省略选择仍可沿用现有后端配置。
+
+| 设置接口（均需应用认证） | 职责 |
+|---|---|
+| `GET /settings/providers` | 公共配置、默认选择与凭据保存方式 |
+| `POST /settings/providers`、`PUT /settings/providers/{id}` | 新建/编辑服务商；Key 只写 |
+| `POST /settings/providers/default` | 设置应用默认服务商与模型 |
+| `POST /settings/providers/{id}/models/refresh` | 显式从已保存接口获取模型列表 |
+| `POST /settings/providers/{id}/test` | 小规模真实连接与工具调用测试 |
+
+任务、对话和运行事件包含公共 `model_selection`；原 CLI JSON 报告格式继续保留。设置删除/并发模型/独立角色模型配置不在本轮范围内。
 
 ## 8. 验收矩阵与路线
 
