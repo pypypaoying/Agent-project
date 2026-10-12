@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
@@ -149,5 +149,65 @@ describe('real-data chat interface', () => {
     expect(await screen.findByText('最终核验正文', {}, { timeout: 3000 })).toBeInTheDocument();
     expect(vi.mocked(streamEvents).mock.calls[1][1]).toBe(1);
     expect(api.start).not.toHaveBeenCalled();
+  });
+
+  it('reuses the current empty draft on repeated New Conversation clicks', async () => {
+    render(<App authenticated />);
+    await userEvent.click(await screen.findByRole('button', { name: '问卷分析' }));
+    const input = screen.getByRole('textbox', { name: '任务说明' });
+    await userEvent.type(input, '尚未发送的草稿');
+    await userEvent.click(screen.getByRole('button', { name: '新建对话' }));
+    await userEvent.click(screen.getByRole('button', { name: '新建对话' }));
+    expect(api.createConversation).not.toHaveBeenCalled();
+    expect(input).toHaveValue('尚未发送的草稿');
+    expect(screen.getAllByRole('button', { name: '问卷分析' })).toHaveLength(1);
+  });
+
+  it('creates exactly one draft from an empty history and reuses that single draft', async () => {
+    vi.mocked(api.conversations).mockResolvedValueOnce({ conversations: [] }).mockResolvedValue({ conversations: [{ id: 'new', title: '新对话' }] });
+    vi.mocked(api.createConversation).mockResolvedValue({ id: 'new', title: '新对话', frozen: false });
+    render(<App authenticated />);
+    await screen.findByText('还没有对话');
+    await userEvent.click(screen.getByRole('button', { name: '新建对话' }));
+    await waitFor(() => expect(document.querySelector('.conversation-item.selected')).toHaveAttribute('data-conversation-id', 'new'));
+    await userEvent.click(screen.getByRole('button', { name: '新建对话' }));
+    await userEvent.click(screen.getByRole('button', { name: '新建对话' }));
+    expect(api.createConversation).toHaveBeenCalledTimes(1);
+    expect(document.querySelectorAll('.conversation-item')).toHaveLength(1);
+  });
+
+  it('reuses another verified empty draft but never discards an attached CSV', async () => {
+    vi.mocked(api.conversations).mockResolvedValue({ conversations: [{ id: 'c', title: '问卷分析' }, { id: 'empty', title: '空草稿' }] });
+    vi.mocked(api.conversation).mockImplementation(async id => id === 'c' ? withCsv() : { ...empty(), conversation: { id: 'empty', title: '空草稿' } });
+    render(<App authenticated />);
+    await userEvent.click(await screen.findByRole('button', { name: '问卷分析' }));
+    await screen.findByText('调查.csv');
+    await userEvent.click(screen.getByRole('button', { name: '新建对话' }));
+    await waitFor(() => expect(screen.getByRole('textbox', { name: '任务说明' })).toHaveAttribute('placeholder', '先添加一个 CSV，再输入分析任务…'));
+    expect(api.createConversation).not.toHaveBeenCalled();
+    expect(api.removeFile).not.toHaveBeenCalled();
+    expect(document.querySelector('.conversation-item.selected')).toHaveAttribute('data-conversation-id', 'empty');
+  });
+
+  it('creates a new conversation when all existing drafts have attachments or messages', async () => {
+    await open();
+    await userEvent.click(screen.getByRole('button', { name: '新建对话' }));
+    await waitFor(() => expect(api.createConversation).toHaveBeenCalledTimes(1));
+  });
+
+  it('shows actual tool and Python execution status in chat with the detail panel closed', async () => {
+    const events = [
+      { version: 1, conversation_id: 'c', run_id: 'r', seq: 1, type: 'tool_start', payload: { name: 'profile_csv', id: 'p' } },
+      { version: 1, conversation_id: 'c', run_id: 'r', seq: 2, type: 'tool_end', payload: { name: 'profile_csv', id: 'p', status: 'completed' } },
+      { version: 1, conversation_id: 'c', run_id: 'r', seq: 3, type: 'execution_start', payload: { role: 'analysis', tool_call_id: 'python', attempt: 1, code: 'never print entire code here' } },
+    ];
+    await open({ ...withCsv(), runs: [{ id: 'r', task: '分析', status: 'running', events }] });
+    const progress = await screen.findByRole('region', { name: '真实执行过程' });
+    expect(within(progress).getByText('读取 CSV 数据')).toBeVisible();
+    expect(within(progress).getByText('完成')).toBeVisible();
+    expect(within(progress).getByText('代码 Agent · 第 1 次 Python 执行')).toBeVisible();
+    expect(within(progress).getByText('执行中')).toBeVisible();
+    expect(screen.queryByRole('complementary', { name: '执行面板' })).not.toBeInTheDocument();
+    expect(progress).not.toHaveTextContent('never print entire code here');
   });
 });

@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import threading
 import time
+import tempfile
 import pytest
 from labweaver.agent import create_session
 from labweaver.offline import OfflineIntakeModel, OfflineAnalysisModel
@@ -16,6 +17,44 @@ from test_agent import ReceiptModel, ScriptedModel, call, answer, plan, paired
 
 pytestmark = pytest.mark.docker
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+@pytest.mark.skipif(os.name != "nt" or os.environ.get("LABWEAVER_APPDATA_ACCEPTANCE") != "1",
+                    reason="Opt-in Windows default-AppData bind transport acceptance")
+def test_windows_default_appdata_transports_only_selected_synthetic_input(monkeypatch):
+    """Exercise real Store-host AppData redirection without any personal data."""
+    from labweaver.web.settings import default_data_dir
+
+    owned = default_data_dir() / "diagnostics"
+    owned.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="bind-acceptance-", dir=owned) as folder:
+        nominal = Path(folder)
+        source = nominal / "synthetic.csv"
+        source.write_text("编号,数量\n001,2\n002,3\n", encoding="utf-8")
+        before = hashlib.sha256(source.read_bytes()).hexdigest()
+        monkeypatch.setattr(tempfile, "tempdir", str(nominal))
+        executor = DockerExecutor()
+        mounted = []
+        original_command = executor.command
+
+        def command(docker, image, name, input_dir):
+            mounted.append(Path(input_dir))
+            return original_command(docker, image, name, input_dir)
+
+        monkeypatch.setattr(executor, "command", command)
+        record, assets = executor.execute(
+            "from helper import load_dataset, emit_metric\n"
+            "df = load_dataset()\n"
+            "assert df['c1'].tolist() == ['001', '002']\n"
+            "emit_metric(int(df['c2'].astype(int).sum()), 'sum', '合计')\n",
+            load_csv_snapshot(source),
+            [{"id": "sum", "kind": "metric", "description": "全量合计"}],
+        )
+        assert record["status"] == "completed", record.get("error")
+        assert record["exit_code"] == 0 and record["container_removed"]
+        assert next(iter(assets.values()))["metadata"]["value"] == 5
+        assert mounted[0].parent == nominal.resolve()
+        assert hashlib.sha256(source.read_bytes()).hexdigest() == before
 
 
 @pytest.fixture(autouse=True)

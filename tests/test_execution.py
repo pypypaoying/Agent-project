@@ -1,5 +1,6 @@
 """Host-side container policy, bounded failures and immutable snapshots."""
 
+import io
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -151,3 +152,60 @@ def test_verified_endpoint_is_pinned_and_context_environment_removed(monkeypatch
     ]
     assert "DOCKER_CONTEXT" not in executor._client_env()
     assert "DOCKER_HOST" not in executor._client_env()
+
+
+def test_virtualized_temp_directory_uses_physical_path_for_readonly_bind(tmp_path, monkeypatch):
+    """Transport policy only: no generated Python is executed by this host fixture."""
+    import labweaver.runtime.execution as module
+
+    nominal, physical = tmp_path / "nominal-AppData", tmp_path / "physical-LocalCache"
+    nominal.mkdir()
+    physical.mkdir()
+    original_resolve = Path.resolve
+
+    def redirected(path, *args, **kwargs):
+        return physical if path == nominal else original_resolve(path, *args, **kwargs)
+
+    class Directory:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return str(nominal)
+
+        def __exit__(self, *args):
+            pass
+
+    commands = []
+
+    class Process:
+        returncode = 0
+
+        def __init__(self, command, **kwargs):
+            commands.append(command)
+            assert (physical / "analysis.py").read_text(encoding="utf-8") == "# transport fixture"
+            assert not (nominal / "analysis.py").exists()
+            self.stdout = io.BytesIO(json.dumps({"protocol": 1, "exit_code": 0,
+                                                "stdout": {"text": "", "truncated": False},
+                                                "stderr": {"text": "", "truncated": False},
+                                                "artifacts": []}).encode())
+            self.stderr = io.BytesIO()
+
+        def poll(self):
+            return 0
+
+        def wait(self, **kwargs):
+            return 0
+
+    executor = DockerExecutor()
+    monkeypatch.setattr(Path, "resolve", redirected)
+    monkeypatch.setattr(module.tempfile, "TemporaryDirectory", Directory)
+    monkeypatch.setattr(executor, "preflight", lambda: ("docker", "sha256:" + "a" * 64))
+    monkeypatch.setattr(executor, "_remove", lambda name: True)
+    monkeypatch.setattr(module.subprocess, "Popen", Process)
+    monkeypatch.setattr(module.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=0, stdout=b'{"ExitCode":0,"OOMKilled":false,"Status":"exited"}'))
+    snapshot = SimpleNamespace(source={"name": "synthetic.csv", "sha256": "b" * 64},
+                               headers=["id"], rows=[["001"]])
+    record, _ = executor.execute("# transport fixture", snapshot, [])
+    assert record["status"] == "completed"
+    assert commands[0][commands[0].index("--mount") + 1] == f"type=bind,source={physical},target=/input,readonly"

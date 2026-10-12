@@ -59,6 +59,33 @@ def real_overview_export(manager, file):
     return saved
 
 
+def test_appdata_alias_uses_one_physical_root_for_worker_and_exports(tmp_path, monkeypatch):
+    nominal, physical = tmp_path / "nominal-AppData", tmp_path / "physical-LocalCache"
+    nominal.mkdir()
+    physical.mkdir()
+    original_resolve = Path.resolve
+
+    def redirected(path, *args, **kwargs):
+        return physical if path == nominal else original_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", redirected)
+    settings = WebSettings(data_dir=nominal, project_dir=Path.cwd(), mode="offline",
+                           token="canonical-root-test-token")
+    manager = TaskManager(settings)
+    try:
+        assert manager.store.root == manager.settings.data_dir == physical
+        assert manager.store.path.parent == physical
+        conversation, file = bound_conversation(manager)
+        saved = real_overview_export(manager, file)
+        assert Path(saved["record_path"]).is_relative_to(physical)
+        run_id = insert_running(manager, conversation)
+        manager.active = run_id
+        manager._register_report(run_id, saved)
+        assert manager.run_view(run_id)["status"] == "completed"
+    finally:
+        manager.close()
+
+
 def counts(manager):
     with manager.store.connect() as db:
         return {table: db.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
@@ -283,6 +310,51 @@ class TransportRuntime:
         self.stops.append(force)
         self.closed = True
         self.process.alive = False
+
+
+@pytest.mark.parametrize("event_kind", ["checkpoint_report", "worker_error"])
+def test_save_failure_keeps_execution_diagnostics_and_redacts_secrets(manager, monkeypatch, event_kind):
+    """Diagnostic transport fixture, not evidence of a successful analysis."""
+    conversation, _ = bound_conversation(manager)
+    run_id = insert_running(manager, conversation)
+    runtime = TransportRuntime(manager.settings, manager.store.app_id, conversation["id"],
+                               None, [], "", None)
+    runtime.run_id = run_id
+    manager.runtime, manager.active = runtime, run_id
+    sentinel = "secret-sentinel-diagnostic-12345"
+    manager.secrets += (sentinel,)
+    execution = {"id": uid(), "status": "error", "exit_code": 2,
+                 "error": {"code": "python_failed"},
+                 "stderr": {"text": "missing input script " + sentinel, "truncated": False},
+                 "container_state": {"OOMKilled": False, "ExitCode": 0},
+                 "container_removed": True}
+    if event_kind == "checkpoint_report":
+        def register_failed(*args, **kwargs):
+            raise ValueError("injected canonical export registration failure")
+
+        monkeypatch.setattr(manager, "_register_report", register_failed)
+        payload = {"report": {"code_executions": [execution]}}
+        expected_stage = "report_registration"
+    else:
+        payload = {"code": "save_failed", "message": "执行记录无法保存。",
+                   "exception_type": "PermissionError",
+                   "save_error": {"stage": "partial_export", "exception_type": "PermissionError", "errno": 13},
+                   "execution_error": execution}
+        expected_stage = "partial_export"
+    runtime.events.put({"run_id": run_id, "kind": event_kind, "payload": payload})
+    monkeypatch.setattr(manager, "cleanup_owned", lambda run_id, runtime=None: True)
+    monkeypatch.setattr(manager, "_recover_exports", lambda run: None)
+    manager._listen(runtime)
+    result = manager.run_view(run_id)
+    assert result["status"] == "error" and result["error"]["code"] == "save_failed"
+    assert result["error"]["save_error"]["stage"] == expected_stage
+    assert result["error"]["save_error"]["exception_type"] == ("ValueError" if event_kind == "checkpoint_report" else "PermissionError")
+    actual = result["error"]["execution_error"]
+    assert actual["exit_code"] == 2 and actual["error"]["code"] == "python_failed"
+    assert actual["container_removed"] and actual["container_state"]["OOMKilled"] is False
+    assert "[REDACTED]" in actual["stderr"]["text"]
+    assert sentinel not in encode(result)
+    assert manager.active is None and manager.runtime is None and runtime.closed
 
 
 def test_waiting_for_reply_occupies_global_slot_and_cancel_releases_it(manager, monkeypatch):

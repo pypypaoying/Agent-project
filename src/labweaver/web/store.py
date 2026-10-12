@@ -28,6 +28,10 @@ class Store:
         # Verify the root itself before mkdir or opening a database.
         managed_path(self.root, "attachments")
         self.root.mkdir(parents=True, exist_ok=True)
+        # Resolve after creation: Windows packaged-app AppData virtualization
+        # may map this nominal directory to a physical package LocalCache.
+        self.root = self.root.resolve(strict=True)
+        managed_path(self.root, "attachments")
         self.path = managed_path(self.root, "history.sqlite3")
         with self.connect() as conn:
             conn.execute("PRAGMA journal_mode=WAL")

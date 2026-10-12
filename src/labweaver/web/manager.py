@@ -1,6 +1,7 @@
 """One active task, supervised spawned runtimes, durable real events and atomic registration."""
 
 import json
+from dataclasses import replace
 import multiprocessing as mp
 import os
 from pathlib import Path
@@ -88,6 +89,9 @@ class TaskManager:
         self.settings, self.worker_target = settings, worker_target
         self.application_lock = ApplicationLock(settings.data_dir)
         self.store = Store(settings.data_dir)
+        # Use the canonical storage root in workers, export registration and
+        # their temporary directories; nominal AppData may be virtualized.
+        self.settings = replace(settings, data_dir=self.store.root)
         self.lock = threading.RLock()
         self.active = None
         self.runtime = None
@@ -249,12 +253,33 @@ class TaskManager:
                         if kind == "report" and run["status"] == "cancelling":
                             continue
                         self._register_report(run_id, payload["report"], final=kind == "report")
-                    except Exception:
-                        self.fail(run_id, "save_failed", "成果保存或数据库登记失败；本次不能标记为完成。")
+                    except Exception as exc:
+                        diagnostics = {"save_error": {"stage": "report_registration", "exception_type": type(exc).__name__}}
+                        if isinstance(exc, AppError):
+                            diagnostics["save_error"]["code"] = exc.code
+                        elif isinstance(exc, OSError):
+                            diagnostics["save_error"]["errno"] = exc.errno
+                        saved = payload.get("report")
+                        if isinstance(saved, dict):
+                            failed = next(
+                                (record for record in reversed(saved.get("code_executions", []))
+                                 if isinstance(record, dict) and record.get("status") == "error"),
+                                None,
+                            )
+                            if failed:
+                                diagnostics["execution_error"] = {
+                                    key: failed[key]
+                                    for key in ("id", "error", "exit_code", "stderr", "container_state", "container_removed")
+                                    if key in failed
+                                }
+                        self.fail(run_id, "save_failed", "成果保存或数据库登记失败；真实代码执行结果保留在执行记录中，本次不能标记为完成。",
+                                  extra=scrub(diagnostics, self.secrets))
                 elif kind == "worker_error":
                     if run["status"] != "cancelling":
                         cleaned = self.cleanup_owned(run_id, runtime)
-                        self.fail(run_id, payload["code"], payload["message"], extra={"exception_type": payload.get("exception_type"), "cleanup_confirmed": cleaned})
+                        extra = {"exception_type": payload.get("exception_type"), "cleanup_confirmed": cleaned}
+                        extra.update({key: payload[key] for key in ("save_error", "execution_error") if key in payload})
+                        self.fail(run_id, payload["code"], payload["message"], extra=extra)
                 else:
                     if kind == "container_lifecycle":
                         runtime.known_containers[payload["name"]] = payload

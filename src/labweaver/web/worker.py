@@ -30,6 +30,23 @@ def agent_worker(settings, app_id, csv_path, materials, context, commands, event
     def send(kind, payload):
         events.put({"run_id": current["run_id"], "kind": kind, "payload": scrub(payload, secrets)})
 
+    def saving_failed(exc, stage, executions):
+        diagnostics = {"stage": stage, "exception_type": type(exc).__name__}
+        if isinstance(exc, OSError):
+            diagnostics["errno"] = exc.errno
+        failed = next((record for record in reversed(executions) if record.get("status") == "error"), None)
+        send("worker_error", {
+            "code": "save_failed",
+            "message": "执行记录或成果无法保存；真实代码执行错误保留在诊断中。",
+            "exception_type": type(exc).__name__,
+            "save_error": diagnostics,
+            "execution_error": {
+                key: failed[key]
+                for key in ("id", "error", "exit_code", "stderr", "container_state", "container_removed")
+                if key in failed
+            } if failed else None,
+        })
+
     def on_event(event):
         if session is not None and current["identity"] != session.task_id:
             current["identity"] = session.task_id
@@ -49,7 +66,11 @@ def agent_worker(settings, app_id, csv_path, materials, context, commands, event
                        "code_executions": deepcopy(session.analyst.attempts), "final_answer": "",
                        "error": {"code": "partial_checkpoint", "message": "已取得部分执行成果，任务尚未核验完成。"}}
             if not contains_secret(partial, secrets) and not any(contains_secret(raw, secrets) for a in assets.values() for raw in a["files"].values()):
-                path = save_run(partial, settings.data_dir / "exports", artifact_assets=assets, with_brief=False)
+                try:
+                    path = save_run(partial, settings.data_dir / "exports", artifact_assets=assets, with_brief=False)
+                except (OSError, ValueError, TypeError, KeyError) as exc:
+                    saving_failed(exc, "partial_export", partial["code_executions"])
+                    raise
                 send("checkpoint_report", {"report": json.loads(path.read_text(encoding="utf-8"))})
 
     def watch_cancel():
@@ -104,7 +125,11 @@ def agent_worker(settings, app_id, csv_path, materials, context, commands, event
                 send("worker_error", {"code": "secret_in_output", "message": "输出包含敏感配置，已拒绝保存与交付。"})
                 break
             send("saving", {"status": report["status"]})
-            saved = session.save(settings.data_dir / "exports")
+            try:
+                saved = session.save(settings.data_dir / "exports")
+            except (OSError, ValueError, TypeError, KeyError) as exc:
+                saving_failed(exc, "final_export", report.get("code_executions", []))
+                raise
             send("report", {"report": saved, "record_path": saved["record_path"]})
             if report["status"] in {"cancelled", "error"}:
                 break

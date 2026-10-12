@@ -332,7 +332,10 @@ class DockerExecutor:
                 raise ExecutionError("cancelled", "Execution cancelled")
             record["image_id"] = image_id
             with tempfile.TemporaryDirectory(prefix="labweaver-input-") as folder:
-                input_dir = Path(folder)
+                # Packaged Windows hosts can redirect nominal AppData into a
+                # package LocalCache. Docker runs outside that redirection and
+                # must receive the actual filesystem path, not the alias.
+                input_dir = Path(folder).resolve(strict=True)
                 input_dir.chmod(0o755)
                 (input_dir / "dataset.json").write_text(
                     json.dumps(

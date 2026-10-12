@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { api, ApiError, downloadFile, streamEvents } from './api';
+import { summarizeProgress, type ProgressStep } from './progress';
 import type { Artifact, Conversation, ConversationDetail, ManagedFile, Message, Run, RunEvent, RunStatus, TablePreview } from './types';
 
 const activeStatuses: RunStatus[] = ['running', 'awaiting_input', 'cancelling'];
@@ -22,7 +23,7 @@ const displayColumn = (value: unknown): string => {
   return text(value);
 };
 
-function Icon({ name }: { name: 'plus' | 'attach' | 'panel' | 'arrow' | 'stop' | 'file' | 'download' | 'close' }) {
+function Icon({ name }: { name: 'plus' | 'attach' | 'panel' | 'arrow' | 'stop' | 'file' | 'download' | 'close' | 'check' }) {
   const paths = {
     plus: <path d="M12 5v14M5 12h14" />,
     attach: <path d="m9 14 6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l9-9" />,
@@ -32,8 +33,24 @@ function Icon({ name }: { name: 'plus' | 'attach' | 'panel' | 'arrow' | 'stop' |
     file: <><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" /><path d="M14 3v6h6M8 14h8M8 17h5" /></>,
     download: <><path d="M12 3v12m-5-5 5 5 5-5M5 17v4h14v-4" /></>,
     close: <path d="m6 6 12 12M18 6 6 18" />,
+    check: <path d="m5 12 4 4 10-10" />,
   };
-  return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
+  return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
+}
+
+const isEmptyDraft = (candidate: ConversationDetail) => !candidate.conversation.frozen && !candidate.conversation.inputs_frozen && candidate.files.length === 0 && candidate.messages.length === 0 && candidate.runs.length === 0;
+async function findEmptyDraft(conversations: Conversation[], current: ConversationDetail | null): Promise<ConversationDetail | null> {
+  if (current && isEmptyDraft(current)) return current;
+  for (const conversation of conversations) {
+    if (conversation.id === current?.conversation.id || conversation.frozen || conversation.inputs_frozen) continue;
+    try {
+      const candidate = await api.conversation(conversation.id);
+      if (isEmptyDraft(candidate)) return candidate;
+    } catch (reason) {
+      if (!(reason instanceof ApiError && reason.status === 404)) throw reason;
+    }
+  }
+  return null;
 }
 
 function Markdown({ children }: { children: string }) {
@@ -94,7 +111,26 @@ function ArtifactCard({ artifact, onError }: { artifact: Artifact; onError: (mes
   </section>;
 }
 
-function RunCard({ run, liveAnswer, messages, onError, onRerun }: { run: Run; liveAnswer?: string; messages: Message[]; onError: (message: string) => void; onRerun: (task: string) => void }) {
+function ProgressRow({ step }: { step: ProgressStep }) {
+  return <li className={`progress-row progress-${step.state}`}><span className="progress-mark">{step.state === 'complete' ? <Icon name="check" /> : step.state === 'running' ? <span className="pulse" /> : <span className="progress-ring" />}</span><div><span>{step.title}</span>{step.detail && <small>{step.detail}</small>}</div><span className="progress-status">{step.status}</span></li>;
+}
+
+function RunProgress({ run, events }: { run: Run; events: RunEvent[] }) {
+  const active = activeStatuses.includes(run.status);
+  const steps = summarizeProgress(events, active, run.status === 'awaiting_input');
+  const plans = events.filter(event => event.type === 'plan').at(-1)?.payload.deliverables;
+  if (!steps.length && !Array.isArray(plans)) return null;
+  const visibleCount = active ? 6 : 5;
+  const older = steps.slice(0, Math.max(0, steps.length - visibleCount));
+  const recent = steps.slice(-visibleCount);
+  return <section className="run-progress" aria-label="真实执行过程"><div className="progress-heading">执行过程<span>{steps.length} 项实际记录</span></div>
+    {Array.isArray(plans) && plans.length > 0 && <details className="progress-plan" open={active}><summary>交付计划</summary><ul>{plans.map((raw, index) => { const plan = raw as Record<string, unknown>; return <li key={index}>{text(plan.description)}</li>; })}</ul></details>}
+    {older.length > 0 && <details className="older-progress"><summary>查看较早的 {older.length} 项执行记录</summary><ol>{older.map(step => <ProgressRow key={step.id} step={step} />)}</ol></details>}
+    <ol className="recent-progress" aria-live={active ? 'polite' : 'off'}>{recent.map(step => <ProgressRow key={step.id} step={step} />)}</ol>
+  </section>;
+}
+
+function RunCard({ run, liveAnswer, messages, events, onError, onRerun }: { run: Run; liveAnswer?: string; messages: Message[]; events: RunEvent[]; onError: (message: string) => void; onRerun: (task: string) => void }) {
   const final = answerText(run.final_answer);
   const provisional = activeStatuses.includes(run.status);
   return <article className="run-card" data-testid={`run-${run.id}`}>
@@ -102,8 +138,9 @@ function RunCard({ run, liveAnswer, messages, onError, onRerun }: { run: Run; li
     {messages.filter(message => message.question_id && (message.role === 'user' || message.state === 'answered')).map(message => <div key={message.id} className={`confirmation-message ${message.role === 'user' ? 'confirmed-reply' : ''}`}><span className="message-label">{message.role === 'user' ? '你的确认回复' : 'Agent 澄清'}</span><p>{message.content}</p></div>)}
     <div className="assistant-message">
       <div className="assistant-heading"><span className="brand-dot small" /><strong>LabWeaver</strong><span className={`status status-${run.status}`}>{labels[run.status]}</span></div>
+      <RunProgress run={run} events={events} />
       {(liveAnswer || final) && <><Markdown>{final || liveAnswer || ''}</Markdown>{provisional && <span className="muted verification">正文待核验，尚未确认交付完成</span>}</>}
-      {run.status === 'running' && !liveAnswer && !final && <p className="muted working"><span className="pulse" />正在执行任务，真实进度可在执行面板中查看。</p>}
+      {run.status === 'running' && !liveAnswer && !final && <p className="muted working"><span className="pulse" />正在分析，回答与成果仍需核验。</p>}
       {Boolean(run.error) && <p className="run-error">{text(run.error)}</p>}
       {run.status === 'interrupted' && <div className="interrupted-note"><p>服务重启前的执行已中断。历史结果仍可查看；原中断节点不能恢复。</p><button onClick={() => onRerun(run.task ?? '')}>按原任务重新执行</button></div>}
       {(run.artifacts ?? []).map(artifact => <ArtifactCard key={artifact.id} artifact={artifact} onError={onError} />)}
@@ -149,6 +186,7 @@ export function App({ authenticated }: { authenticated: boolean }) {
   const bottom = useRef<HTMLDivElement>(null);
   const composing = useRef(false);
   const pendingRequest = useRef<{ key: string; id: string } | null>(null);
+  const newConversationPending = useRef(false);
   const displayedConversation = useRef<string | null>(null);
   const activeRun = detail?.runs.find(run => activeStatuses.includes(run.status));
   const latestRun = activeRun ?? detail?.runs.at(-1);
@@ -175,14 +213,19 @@ export function App({ authenticated }: { authenticated: boolean }) {
     } catch (reason) { setError((reason as Error).message); } finally { setBusy(false); }
   }, [refreshDetail]);
   const newConversation = useCallback(async () => {
+    if (newConversationPending.current) return displayedConversation.current;
+    newConversationPending.current = true;
     setError(''); setBusy(true);
     try {
-      const conversation = await api.createConversation(); await refreshList();
-      displayedConversation.current = conversation.id;
-      setDetail({ conversation, files: [], messages: [], runs: [] }); setTask(''); setReply(''); setSelectedContexts([]); setContextsExplicit(false); setEvents([]); setLiveAnswer('');
-      return conversation.id;
-    } catch (reason) { setError((reason as Error).message); return null; } finally { setBusy(false); }
-  }, [refreshList]);
+      const draft = await findEmptyDraft(conversations, detail);
+      if (draft && draft.conversation.id === detail?.conversation.id) { taskInput.current?.focus(); return draft.conversation.id; }
+      const next = draft ?? { conversation: await api.createConversation(), files: [], messages: [], runs: [] };
+      if (!draft) await refreshList();
+      displayedConversation.current = next.conversation.id;
+      setDetail(next); setTask(''); setReply(''); setSelectedContexts([]); setContextsExplicit(false); setEvents([]); setLiveAnswer('');
+      return next.conversation.id;
+    } catch (reason) { setError((reason as Error).message); return null; } finally { setBusy(false); newConversationPending.current = false; }
+  }, [refreshList, conversations, detail]);
 
   useEffect(() => {
     if (!authenticated) return;
@@ -241,8 +284,10 @@ export function App({ authenticated }: { authenticated: boolean }) {
     let id = detail?.conversation.id;
     try {
       if (!id) {
-        const conversation = await api.createConversation(); id = conversation.id;
-        displayedConversation.current = id; setDetail({ conversation, files: [], messages: [], runs: [] });
+        const draft = await findEmptyDraft(conversations, null);
+        const next = draft ?? { conversation: await api.createConversation(), files: [], messages: [], runs: [] };
+        id = next.conversation.id;
+        displayedConversation.current = id; setDetail(next);
         setSelectedContexts([]); setContextsExplicit(false); setEvents([]); setLiveAnswer('');
       }
       for (const file of valid) await api.upload(id, file);
@@ -284,7 +329,7 @@ export function App({ authenticated }: { authenticated: boolean }) {
   return <div className={`app-shell ${panel ? 'panel-open' : ''}`} onDragOver={event => { event.preventDefault(); if (event.dataTransfer.types.includes('Files')) setDragging(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false); }} onDrop={event => { event.preventDefault(); setDragging(false); void uploadFiles(Array.from(event.dataTransfer.files)); }}>
     <nav className="sidebar" aria-label="对话导航"><div className="logo"><span className="brand-dot" /><strong>LabWeaver</strong><span className="logo-caption">本地数据分析</span></div>
       <button className="new-chat" disabled={busy} onClick={() => void newConversation()}><Icon name="plus" />新建对话</button>
-      <div className="nav-caption">对话历史</div><div className="conversation-list">{conversations.map(conversation => <button className={`conversation-item ${detail?.conversation.id === conversation.id ? 'selected' : ''}`} key={conversation.id} onClick={() => void openConversation(conversation.id)} title={conversation.title}>{conversation.title || '未命名对话'}</button>)}{!conversations.length && <p className="muted nav-empty">还没有对话</p>}</div>
+      <div className="nav-caption">对话历史</div><div className="conversation-list">{conversations.map(conversation => <button className={`conversation-item ${detail?.conversation.id === conversation.id ? 'selected' : ''}`} key={conversation.id} data-conversation-id={conversation.id} disabled={busy} onClick={() => void openConversation(conversation.id)} title={conversation.title}>{conversation.title || '未命名对话'}</button>)}{!conversations.length && <p className="muted nav-empty">还没有对话</p>}</div>
       <footer className="sidebar-footer"><span className="local-indicator" />本机运行 · 历史保存在本地<span className="muted">分析执行使用 Docker；任务与资料会发给配置的模型服务。</span></footer>
     </nav>
     <main className="chat-main"><header className="topbar"><div><strong>{detail?.conversation.title || '开始一次数据分析'}</strong><span className="muted">{health?.mode === 'offline' ? '确定性离线演示' : '通用 CSV 分析助手'}</span></div><button className={`icon-button ${panel ? 'selected' : ''}`} aria-label="查看执行面板" aria-pressed={panel} onClick={() => setPanel(!panel)}><Icon name="panel" /></button></header>
@@ -296,7 +341,7 @@ export function App({ authenticated }: { authenticated: boolean }) {
       {typeof health?.active_run_id === 'string' && health.active_run_id !== activeRun?.id && <div className="notice"><span>其他对话有活动任务，完成或停止后可开始新分析。</span><button className="link-button" onClick={() => void api.run(health.active_run_id as string).then(async run => { if (run.conversation_id) await openConversation(run.conversation_id); }).catch(reason => setError(reason.message))}>查看任务</button></div>}
       <div className="chat-scroll">
         {!detail?.runs.length && <section className="welcome"><span className="brand-dot welcome-dot" /><h1>从数据到可核对的成果</h1><p>添加一个 CSV，用自然语言说明你想分析什么。可选资料用于解释字段、规则与方法。</p><div className="welcome-steps"><span>1 添加数据</span><span>2 描述任务</span><span>3 查看真实结果</span></div><button className="outline-button" disabled={busy} onClick={() => uploadInput.current?.click()}><Icon name="attach" />选择 CSV 或资料</button><small>支持 CSV、TXT、MD、文字型 PDF · 可拖入文件</small></section>}
-        <div className="timeline">{detail?.runs.map(run => <RunCard key={run.id} run={run} messages={detail.messages.filter(message => message.run_id === run.id)} liveAnswer={run.id === activeRun?.id ? liveAnswer : undefined} onError={showError} onRerun={value => { setTask(value); taskInput.current?.focus(); }} />)}</div><div ref={bottom} />
+        <div className="timeline">{detail?.runs.map(run => <RunCard key={run.id} run={run} messages={detail.messages.filter(message => message.run_id === run.id)} events={run.id === activeRun?.id ? events : run.events ?? []} liveAnswer={run.id === activeRun?.id ? liveAnswer : undefined} onError={showError} onRerun={value => { setTask(value); taskInput.current?.focus(); }} />)}</div><div ref={bottom} />
       </div>
       <div className="composer-area">
         {detail?.files.length ? <div className="attachments" aria-label="当前附件">{detail.files.map(file => <div className="attachment" key={file.id}><Icon name="file" /><div><strong title={file.name}>{file.name}</strong><small>{file.parse_error ? '解析需确认' : file.role === 'csv' || extension(file.name) === 'csv' ? file.preview?.row_count == null ? 'CSV 数据' : `${file.preview.row_count} 行 · ${file.preview.columns?.length ?? '?'} 列` : '任务资料'}</small></div>{!frozen && <button className="icon-button" aria-label={`移除 ${file.name}`} disabled={busy} onClick={() => { setBusy(true); void api.removeFile(detail.conversation.id, file.id).then(() => refreshDetail(detail.conversation.id)).catch(reason => setError(reason.message)).finally(() => setBusy(false)); }}><Icon name="close" /></button>}<details className="attachment-preview"><summary>预览</summary>{file.preview?.rows && file.preview.columns ? <DataTable preview={{ rows: file.preview.rows, columns: file.preview.columns, row_count: file.preview.row_count ?? file.preview.rows.length }} /> : <pre>{file.parse_error ? text(file.parse_error) : file.preview?.text ?? '资料将在实际检索时解析；上传不等于解析成功。'}</pre>}</details></div>)}</div> : null}
