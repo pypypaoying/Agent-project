@@ -22,7 +22,7 @@ cd ..
 
 构建需要 Node.js；日常使用双击仓库根目录 `start-labweaver.cmd`，或执行 `uv run --frozen --no-sync --extra web labweaver serve --open`。页面仅通过受保护的回环 API 访问本机数据，API Key 不传给前端。关闭启动终端前先停止任务；关闭浏览器页面不会自动停止分析。
 
-右侧执行面板展示实际代码、执行错误和检索出处；完整 CSV 下载与表格预览分开。数据库、附件与成果保存在用户应用数据目录，不进入仓库。搜索、工作空间、独立知识库和 Tauri 安装包尚未实现。应用设计见 [Desktop](docs/desktop.md)，操作及测试见 [使用](docs/usage.md)和[验收](docs/verification.md)。
+聊天区展示真实工具、代码尝试、核验和保存进度，右侧执行面板提供完整代码、错误和检索出处；完整 CSV 下载与表格预览分开。数据库、附件与成果保存在用户应用数据目录，不进入仓库。搜索、工作空间、独立知识库和 Tauri 安装包尚未实现。应用设计见 [Desktop](docs/desktop.md)，操作及测试见 [使用](docs/usage.md)和[验收](docs/verification.md)。
 
 ## 安装与 VS Code 使用
 
