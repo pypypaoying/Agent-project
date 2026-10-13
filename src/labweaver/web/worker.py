@@ -6,15 +6,18 @@ import multiprocessing
 from pathlib import Path
 import threading
 
-from .security import contains_secret, scrub, secret_values
+from .security import contains_secret, managed_path, scrub, secret_values
 
 
 def agent_worker(settings, app_id, csv_path, materials, context, commands, events, cancellation):
     # The worker is backend-only. Tracing is always disabled.
     os.environ["LANGSMITH_TRACING"] = "false"
     os.environ["LANGCHAIN_TRACING_V2"] = "false"
-    work = settings.data_dir / "runtime" / str(os.getpid())
-    work.mkdir(parents=True, exist_ok=True)
+    if settings.runtime_dir is None:
+        raise ValueError("Worker requires a host-owned runtime directory")
+    work = managed_path(settings.data_dir, settings.runtime_dir.relative_to(settings.data_dir).as_posix())
+    if not work.is_dir():
+        raise ValueError("Worker runtime directory is missing")
     temp = work / "temp"
     temp.mkdir(exist_ok=True)
     for name in ("TEMP", "TMP", "TMPDIR"):

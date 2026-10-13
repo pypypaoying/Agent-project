@@ -17,11 +17,13 @@ from labweaver.runtime.artifacts import (
 
 def _report_markdown(text):
     """Readable explanatory text without active HTML or remote images."""
-    text = re.sub(r"!\[([^\]\n]*)\]\([^\n]*?\)", r"\1", text)
+    text = re.sub(r"!\[([^\]\n]*)\](?:\([^\n]*?\)|\[[^\]\n]*\])?", r"\1", text)
     def link(match):
         label, target = match.groups()
         return match.group(0) if target.strip().startswith(("https://", "http://")) else label
     text = re.sub(r"\[([^\]\n]*)\]\(([^\)\n]*)\)", link, text)
+    text = re.sub(r"(?m)^ {0,3}\[[^\]\n]+\]:\s*(\S+)[^\n]*$",
+                  lambda m: m.group(0) if m.group(1).startswith(("http://", "https://")) else "", text)
     return html.escape(text, quote=False)
 
 
@@ -33,11 +35,11 @@ def _markdown_brief(report):
         "",
         f"状态：{report['status']}",
         "",
-        f"任务：{report.get('task', '')}",
+        f"任务：{_report_markdown(report.get('task', ''))}",
         "",
         f"输入 SHA-256：{(report.get('source') or {}).get('sha256', '')}",
         "",
-        report.get("final_answer", ""),
+        _report_markdown(report.get("final_answer", "")),
         "",
         "## 交付项",
         "",
@@ -53,7 +55,7 @@ def _markdown_brief(report):
         lines.extend(
             [
                 "",
-                f"## {artifact['label']}",
+                f"## {_report_markdown(artifact['label'])}",
                 "",
                 f"执行：{artifact['execution_id']}；交付项：{artifact['deliverable_id']}",
                 "",
@@ -78,7 +80,7 @@ def _markdown_brief(report):
         elif artifact.get("preview"):
             lines.extend(
                 [
-                    _table_markdown(artifact["preview"]),
+                    _report_markdown(_table_markdown(artifact["preview"])),
                     "",
                     f"预览最多 20 行，完整结果 {artifact['row_count']} 行见 CSV。",
                     "",
@@ -105,7 +107,7 @@ def _markdown_brief(report):
                 [
                     f"### [{chunk['id']}] {chunk['name']} {chunk['location']}",
                     "",
-                    chunk["text"],
+                    _report_markdown(chunk["text"]),
                     "",
                 ]
             )

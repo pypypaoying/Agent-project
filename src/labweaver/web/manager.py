@@ -12,7 +12,7 @@ import time
 
 from .context import history_context
 from .files import MEDIA, file_view, import_file, read_registered
-from .security import AppError, contains_secret, digest, managed_path, scrub, secret_values
+from .security import AppError, contains_secret, digest, identifier, managed_path, purge_managed_tree, scrub, secret_values
 from .store import Store, encode, now, uid
 from .worker import agent_worker
 from .providers import ProviderRegistry
@@ -61,16 +61,36 @@ class Runtime:
         self.conversation_id, self.run_id = conversation_id, None
         self.model_config = settings.model_config
         self.selection_key = None
+        # Host-generated IDs establish ownership; PIDs may be reused after a crash.
+        self.workspace_relative = f"runtime/{identifier(conversation_id)}/{uid()}"
+        self.workspace_root = settings.data_dir
+        self.workspace_cleaned = False
+        work = managed_path(settings.data_dir, self.workspace_relative)
+        work.mkdir(parents=True, exist_ok=False)
+        settings = replace(settings, runtime_dir=work)
         self.commands, self.events, self.cancel_signal = ctx.Queue(), ctx.Queue(), ctx.Event()
         self.process = ctx.Process(target=target, args=(settings, app_id, csv_path, materials, context,
                                                      self.commands, self.events, self.cancel_signal), daemon=False)
         self.known_containers = {}
         self.deadline = None
         self.closed = False
-        self.process.start()
+        try:
+            self.process.start()
+        except BaseException:
+            self._cleanup_workspace()
+            raise
+
+    def _cleanup_workspace(self):
+        try:
+            purge_managed_tree(self.workspace_root, self.workspace_relative)
+            self.workspace_cleaned = True
+        except (OSError, AppError):
+            self.workspace_cleaned = False
 
     def stop(self, *, force=False):
         if self.closed:
+            if not self.process.is_alive():
+                self._cleanup_workspace()
             return
         self.closed = True
         if self.process.is_alive():
@@ -89,6 +109,8 @@ class Runtime:
                 if self.process.is_alive():
                     self.process.kill()
                     self.process.join(timeout=3)
+        if not self.process.is_alive():
+            self._cleanup_workspace()
 
 
 class TaskManager:
@@ -360,6 +382,8 @@ class TaskManager:
                                   extra=scrub(diagnostics, self.secrets))
                 elif kind == "worker_error":
                     if run["status"] != "cancelling":
+                        runtime.cancel_signal.set()
+                        runtime.stop(force=True)
                         cleaned = self.cleanup_owned(run_id, runtime)
                         extra = {"exception_type": payload.get("exception_type"), "cleanup_confirmed": cleaned}
                         extra.update({key: payload[key] for key in ("save_error", "execution_error") if key in payload})
@@ -537,13 +561,17 @@ class TaskManager:
             if self.store.require("runs", run_id)["status"] not in TERMINAL:
                 self._recover_exports(self.store.require("runs", run_id))
                 self.fail(run_id, "cancelled" if cleaned else "cancel_cleanup_failed",
-                          "任务已停止。" if cleaned else "工作进程已停止，但未能确认容器清理，请检查 Docker。",
+                          "任务已停止。" if cleaned else "未能确认工作进程、临时目录或容器清理，请查看执行记录并重试。",
                           status="cancelled" if cleaned else "error", extra={"cleanup_confirmed": cleaned})
 
     def cleanup_owned(self, run_id, runtime=None):
         """Inspect only exact app/run labels on the pinned local daemon; never remove arbitrary workloads."""
         from labweaver.runtime.execution import DockerExecutor, docker_executable, ExecutionError
         from labweaver.runtime.execution import ExecutionConfig
+        if runtime is not None and not runtime.process.is_alive() and hasattr(runtime, "_cleanup_workspace"):
+            runtime._cleanup_workspace()
+        if runtime is not None and (runtime.process.is_alive() or not getattr(runtime, "workspace_cleaned", True)):
+            return False
         executor = DockerExecutor(ExecutionConfig(image=self.settings.image))
         try:
             endpoint = next((p.get("endpoint") for p in (runtime.known_containers.values() if runtime else []) if p.get("endpoint")), None)

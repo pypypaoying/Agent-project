@@ -49,6 +49,35 @@ def managed_path(root: Path, relative: str) -> Path:
     return candidate
 
 
+def managed_tree(root, relative):
+    """Inspect an owned tree without following symlinks or reparse points."""
+    start = managed_path(root, relative)
+    if not start.exists():
+        return []
+    entries, pending = [], [start]
+    while pending:
+        path = pending.pop()
+        safe = managed_path(root, path.relative_to(root).as_posix())
+        info = safe.lstat()
+        if stat.S_ISDIR(info.st_mode):
+            entries.append((safe, True))
+            pending.extend(safe.iterdir())
+        elif stat.S_ISREG(info.st_mode):
+            entries.append((safe, False))
+        else:
+            raise AppError("unsafe_path", "应用文件目录包含不允许的文件类型。", 403)
+    return entries
+
+
+def purge_managed_tree(root, relative):
+    target = managed_path(root, relative)
+    if target.exists() and not target.resolve(strict=True).is_relative_to(root):
+        raise AppError("unsafe_path", "删除目录不在应用数据范围内。", 403)
+    for path, directory in reversed(managed_tree(root, relative)):
+        checked = managed_path(root, path.relative_to(root).as_posix())
+        checked.rmdir() if directory else checked.unlink()
+
+
 def secret_values(settings):
     values = [settings.token, os.environ.get("LLM_API_KEY", "")]
     if getattr(settings, "model_config", None) is not None:

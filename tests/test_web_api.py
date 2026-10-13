@@ -27,6 +27,10 @@ def clarification_worker(*args):
 
 def blocked_worker(settings, app_id, csv, materials, context, commands, events, cancel):
     command = commands.get()
+    temp = settings.runtime_dir / "temp" / "labweaver-input-interrupted"
+    temp.mkdir(parents=True)
+    (temp / "dataset.json").write_text('{"private_snapshot": true}', encoding="utf-8")
+    (temp / "analysis.py").write_text("# private generated attempt\n", encoding="utf-8")
     events.put({"run_id": command["run_id"], "kind": "tool_start", "payload": {"name": "blocked_model", "id": "call1"}})
     time.sleep(120)  # Deliberately ignores cooperative stop, like a blocked native transport.
 
@@ -136,13 +140,29 @@ def test_forced_stop_terminates_owned_worker(tmp_path):
     with client:
         conversation, _ = prepared(client)
         run = client.post(f"/api/v1/conversations/{conversation}/runs", json={"task": "概览", "request_id": uid()}).json()
-        process = manager.runtime.process
+        runtime = manager.runtime
+        process = runtime.process
+        work = manager.store.root / runtime.workspace_relative
+        deadline = time.monotonic() + 20
+        while not (work / "temp/labweaver-input-interrupted/dataset.json").exists() and time.monotonic() < deadline:
+            time.sleep(.02)
+        assert (work / "temp/labweaver-input-interrupted/dataset.json").exists()
+        other = manager.store.new_conversation("保留其他对话")
+        unrelated = manager.store.root / "runtime" / other["id"] / uid()
+        unrelated.mkdir(parents=True)
+        (unrelated / "sentinel.txt").write_text("keep", encoding="utf-8")
         response = client.post(f"/api/v1/runs/{run['id']}/cancel")
         assert response.status_code == 202
         assert client.post(f"/api/v1/runs/{run['id']}/cancel").status_code == 202
         done = wait_run(client, run["id"], "cancelled")
         assert done["error"]["cleanup_confirmed"] and not process.is_alive()
         assert manager.active is None
+        assert runtime.workspace_cleaned and not work.exists()
+        assert (unrelated / "sentinel.txt").read_text(encoding="utf-8") == "keep"
+        deleted = client.request(
+            "DELETE", f"/api/v1/conversations/{conversation}", json={"confirm": True})
+        assert deleted.status_code == 200 and not work.parent.exists()
+        assert unrelated.exists()
 
 
 def test_worker_crash_and_single_application_lock(tmp_path):
@@ -168,6 +188,8 @@ def test_save_failure_never_completed_and_secret_never_persisted(tmp_path, monke
         run = client.post(f"/api/v1/conversations/{conversation}/runs", json={"task": "概览字段", "request_id": uid()}).json()
         failed = wait_run(client, run["id"], "error")
         assert failed["error"]["code"] == "save_failed"
+        assert failed["error"]["cleanup_confirmed"] is True
+        assert not list((manager.store.root / "runtime" / conversation).glob("*/temp"))
         assert not any(e["type"] == "completed" for e in failed["events"])
         assert "SECRET-CANARY" not in json.dumps(client.get(f"/api/v1/conversations/{conversation}").json())
         assert b"SECRET-CANARY" not in manager.store.path.read_bytes()

@@ -30,6 +30,7 @@ class WebSettings:
     allowed_origins: tuple[str, ...] = ()
     cancel_grace: float = 5.0
     model_config: ModelConfig | None = field(default=None, repr=False)
+    runtime_dir: Path | None = field(default=None, repr=False)
 
     @classmethod
     def from_project(cls, *, data_dir=None, mode=None, token=None, config=None):

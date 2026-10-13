@@ -188,6 +188,51 @@ def test_real_overview_and_orphan_exports_are_removed_original_and_other_chat_ke
             assert db.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
 
 
+def test_orphan_runtime_snapshot_is_removed_after_restart_without_pid_guessing(manager):
+    conversation, _ = bound(manager)
+    runtime = manager.store.root / "runtime" / conversation["id"] / uid() / "temp" / "labweaver-input-orphan"
+    runtime.mkdir(parents=True)
+    (runtime / "dataset.json").write_text('{"private": true}', encoding="utf-8")
+    (runtime / "analysis.py").write_text("# orphan attempt", encoding="utf-8")
+    # Old PID-only folders cannot be attributed reliably and are never guessed.
+    legacy = manager.store.root / "runtime" / "12345"
+    legacy.mkdir()
+    (legacy / "unattributed.txt").write_text("keep", encoding="utf-8")
+    other = manager.store.new_conversation("另一个对话")
+    sibling = manager.store.root / "runtime" / other["id"] / uid()
+    sibling.mkdir(parents=True)
+    (sibling / "private.json").write_text("keep", encoding="utf-8")
+    manager.close()
+    restarted = TaskManager(manager.settings)
+    try:
+        assert ConversationService(restarted).delete(conversation["id"], confirm=True)["deleted"]
+        assert not (manager.store.root / "runtime" / conversation["id"]).exists()
+        assert (legacy / "unattributed.txt").is_file() and (sibling / "private.json").is_file()
+    finally:
+        restarted.close()
+
+
+def test_runtime_cleanup_failure_is_explicit_and_retryable(manager, monkeypatch):
+    from labweaver.web.manager import Runtime
+    import labweaver.web.manager as module
+
+    conversation, _ = bound(manager)
+    relative = f"runtime/{conversation['id']}/{uid()}"
+    folder = manager.store.root / relative
+    folder.mkdir(parents=True)
+    (folder / "dataset.json").write_text("private", encoding="utf-8")
+    runtime = Runtime.__new__(Runtime)
+    runtime.workspace_root, runtime.workspace_relative = manager.store.root, relative
+    runtime.workspace_cleaned = False
+    actual = module.purge_managed_tree
+    monkeypatch.setattr(module, "purge_managed_tree", lambda *args: (_ for _ in ()).throw(PermissionError()))
+    runtime._cleanup_workspace()
+    assert runtime.workspace_cleaned is False and folder.exists()
+    monkeypatch.setattr(module, "purge_managed_tree", actual)
+    runtime._cleanup_workspace()
+    assert runtime.workspace_cleaned is True and not folder.exists()
+
+
 def test_registered_code_artifact_rows_and_unregistered_attempt_are_removed(manager):
     conversation, _ = bound(manager)
     run_id = insert_run(manager, conversation, core={"session_id": uid(), "task_id": uid()})

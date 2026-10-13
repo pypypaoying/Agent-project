@@ -5,9 +5,8 @@ import os
 from pathlib import Path
 import re
 import sqlite3
-import stat
 
-from .security import AppError, contains_secret, identifier, managed_path
+from .security import AppError, contains_secret, identifier, managed_path, managed_tree, purge_managed_tree
 from .store import encode, now, uid
 
 ACTIVE = {"running", "awaiting_input", "cancelling"}
@@ -66,7 +65,7 @@ class ConversationService:
             if active["conversation_id"] == conversation_id:
                 raise AppError("task_active", "请先停止或完成该对话的任务，再永久删除。", 409)
         by_id = {row["id"]: row for row in runs}
-        directories = set()
+        directories = {f"runtime/{identifier(conversation_id)}"}
         for run in runs:
             session, task = run["core_session_id"], run["core_task_id"]
             if session is None and task is None:
@@ -122,22 +121,7 @@ class ConversationService:
 
     def _tree(self, relative):
         """Inspect without following symlinks/reparse points before file operations."""
-        root = managed_path(self.store.root, relative)
-        if not root.exists():
-            return []
-        entries, pending = [], [root]
-        while pending:
-            path = pending.pop()
-            safe = managed_path(self.store.root, path.relative_to(self.store.root).as_posix())
-            info = safe.lstat()
-            if stat.S_ISDIR(info.st_mode):
-                entries.append((safe, True))
-                pending.extend(safe.iterdir())
-            elif stat.S_ISREG(info.st_mode):
-                entries.append((safe, False))
-            else:
-                raise AppError("unsafe_path", "对话文件目录包含不允许的文件类型。", 403)
-        return entries
+        return managed_tree(self.store.root, relative)
 
     def _stop_idle_runtime(self, conversation_id):
         runtime = self.manager.runtime
@@ -157,13 +141,7 @@ class ConversationService:
                        (phase, now(), error, conversation_id))
 
     def _purge_tree(self, relative):
-        root = managed_path(self.store.root, relative)
-        # Resolve and verify the actual target before any recursive removal.
-        if root.exists() and not root.resolve(strict=True).is_relative_to(self.store.root):
-            raise AppError("unsafe_path", "删除目录不在应用数据范围内。", 403)
-        for path, directory in reversed(self._tree(relative)):
-            target = managed_path(self.store.root, path.relative_to(self.store.root).as_posix())
-            target.rmdir() if directory else target.unlink()
+        purge_managed_tree(self.store.root, relative)
 
     def _delete_rows(self, db, conversation_id):
         runs = "SELECT id FROM runs WHERE conversation_id=?"
@@ -202,11 +180,16 @@ class ConversationService:
                 job_id = identifier(job["job_id"])
                 try:
                     entries = json.loads(job["manifest_json"])
-                    valid = isinstance(entries, list) and len(entries) == len(directories)
+                    valid = isinstance(entries, list) and len(entries) in {len(directories), len(directories) - 1}
                     valid = valid and all(isinstance(entry, dict) and set(entry) == {"original", "quarantine"}
                                           and entry["quarantine"] == f".conversation-trash/{job_id}/{index}"
                                           for index, entry in enumerate(entries))
-                    valid = valid and {entry["original"] for entry in entries} == set(directories)
+                    originals = {entry["original"] for entry in entries}
+                    runtime_folder = f"runtime/{conversation_id}"
+                    # Continue an earlier prepared journal if it predates owned
+                    # runtime folders and has no such directory to delete.
+                    legacy = originals == set(directories) - {runtime_folder} and not managed_path(self.store.root, runtime_folder).exists()
+                    valid = valid and (originals == set(directories) or legacy)
                 except (TypeError, ValueError, KeyError, RecursionError):
                     valid = False
                 if not valid:

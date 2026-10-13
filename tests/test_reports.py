@@ -31,3 +31,15 @@ def test_large_metric_has_bounded_brief_and_full_json_stays_an_artifact():
 
 def test_zero_metric_is_not_omitted():
     assert '\n0\n' in _markdown_brief(report(0))
+
+
+def test_reference_images_and_unsafe_reference_links_are_inert():
+    text = _markdown_brief(report({"report_markdown": '![remote][picture]\n![picture]\n[x][bad]\n[picture]: https://example.test/img\n[bad]: javascript:alert(1)'}))
+    assert '![' not in text and 'javascript:' not in text
+
+
+def test_task_answer_and_table_text_cannot_embed_html_or_remote_images():
+    data=report(0)
+    data.update(task='<img src="https://example.test/private">',final_answer='![x](https://example.test/private)')
+    text=_markdown_brief(data)
+    assert '<img' not in text and '![' not in text
