@@ -2,12 +2,12 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
-import { api, streamEvents } from './api';
+import { api, ApiError, streamEvents } from './api';
 import type { ConversationDetail } from './types';
 
 vi.mock('./api', () => ({
-  ApiError: class extends Error {},
-  api: { health: vi.fn(), providers: vi.fn(), saveProvider: vi.fn(), defaultProvider: vi.fn(), refreshProviderModels: vi.fn(), testProvider: vi.fn(), conversations: vi.fn(), createConversation: vi.fn(), conversation: vi.fn(), upload: vi.fn(), removeFile: vi.fn(), start: vi.fn(), run: vi.fn(), reply: vi.fn(), cancel: vi.fn(), preview: vi.fn(), blob: vi.fn() },
+  ApiError: class extends Error { constructor(public status: number, message: string) { super(message); } },
+  api: { health: vi.fn(), shutdown: vi.fn(), providers: vi.fn(), saveProvider: vi.fn(), defaultProvider: vi.fn(), refreshProviderModels: vi.fn(), testProvider: vi.fn(), conversations: vi.fn(), createConversation: vi.fn(), conversation: vi.fn(), upload: vi.fn(), removeFile: vi.fn(), start: vi.fn(), run: vi.fn(), reply: vi.fn(), cancel: vi.fn(), preview: vi.fn(), blob: vi.fn() },
   streamEvents: vi.fn(), downloadFile: vi.fn(),
 }));
 
@@ -235,5 +235,57 @@ describe('real-data chat interface', () => {
     expect(screen.getByLabelText('API Key', { exact: true })).toHaveValue('');
     expect(JSON.stringify(sessionStorage)).not.toContain('temporary-private-key');
     expect(JSON.stringify(localStorage)).not.toContain('temporary-private-key');
+  });
+
+  it('shows expired authorization clearly when loading providers, including on the settings page', async () => {
+    vi.mocked(api.providers).mockRejectedValue(new ApiError(401, 'old token'));
+    render(<App authenticated />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('访问令牌已失效，请用启动器重新打开应用');
+    await userEvent.click(screen.getByRole('button', { name: '设置' }));
+    expect(screen.getByRole('alert')).toHaveTextContent('访问令牌已失效');
+    expect(screen.queryByText(/正在加载供应商配置/)).not.toBeInTheDocument();
+  });
+
+  it('keeps nonauthorization provider loading errors distinct', async () => {
+    vi.mocked(api.providers).mockRejectedValue(new ApiError(500, 'failure'));
+    render(<App authenticated />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('模型供应商列表未能加载');
+    expect(screen.getByRole('alert')).not.toHaveTextContent('令牌已失效');
+  });
+
+  it('only exits after confirmation, hides chat after a genuine successful shutdown response', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
+    vi.mocked(api.shutdown).mockResolvedValue();
+    await open();
+    await userEvent.click(screen.getByRole('button', { name: '退出应用' }));
+    expect(confirm).toHaveBeenCalledTimes(1); expect(api.shutdown).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: '退出应用' }));
+    expect(await screen.findByRole('heading', { name: '应用已退出' })).toBeVisible();
+    expect(api.shutdown).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/重新双击 LabWeaver 启动器/)).toBeVisible();
+    expect(screen.queryByRole('textbox', { name: '任务说明' })).not.toBeInTheDocument();
+  });
+
+  it.each(['running', 'awaiting_input', 'cancelling'] as const)('disables application exit during an actual %s task', async status => {
+    await open({ ...withCsv(), runs: [{ id: 'r', task: '概览', status }] });
+    expect(screen.getByRole('button', { name: '退出应用' })).toBeDisabled();
+    expect(screen.getByText('先停止或完成任务再退出')).toBeVisible();
+    expect(api.shutdown).not.toHaveBeenCalled();
+  });
+
+  it('disables exit when another conversation has the global active task', async () => {
+    vi.mocked(api.health).mockResolvedValue({ mode: 'offline', active_run_id: 'other-run' });
+    await open();
+    expect(screen.getByRole('button', { name: '退出应用' })).toBeDisabled();
+  });
+
+  it('keeps chat usable when a new activity races the shutdown request', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.mocked(api.shutdown).mockRejectedValue(new ApiError(409, 'active run'));
+    await open();
+    await userEvent.click(screen.getByRole('button', { name: '退出应用' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('还有活动任务');
+    expect(screen.queryByRole('heading', { name: '应用已退出' })).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: '任务说明' })).toBeVisible();
   });
 });

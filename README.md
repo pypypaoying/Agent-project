@@ -20,7 +20,7 @@ npm run build
 cd ..
 ```
 
-构建需要 Node.js；日常使用双击仓库根目录 `start-labweaver.cmd`，或执行 `uv run --frozen --no-sync --extra web labweaver serve --open`。页面仅通过受保护的回环 API 访问本机数据，后端不返回 API Key。关闭启动终端前先停止任务；关闭浏览器页面不会自动停止分析。
+构建需要 Node.js；日常使用双击仓库根目录 `start-labweaver.cmd`，或执行 `uv run --frozen --no-sync --extra web labweaver serve --open`。重复启动验证并复用同一项目的服务；页面仅通过受保护的回环 API 访问本机数据，后端不返回 API Key。关闭浏览器页面保留后台服务；完全退出使用左下角 **退出应用**或在原启动终端按 **Ctrl+C**，有任务时先完成或停止。历史与已登记成果保留。
 
 输入框右下角可以切换服务商和模型，默认 DeepSeek。左下角 **设置** 可填写 API Key、Base URL 和模型列表，添加其他 OpenAI Chat Completions 兼容服务商，并测试连接或从接口获取模型列表。Windows 新凭据使用当前用户的 DPAPI 加密保存；已有官方 DeepSeek `.env` 可继续通过引用使用，不复制密钥。切换在下一次任务生效，同一任务的主/代码 Agent 使用同一模型；运行中或等待回复时暂时锁定。详见[模型设置](docs/usage.md#模型选择与服务商配置)。
 

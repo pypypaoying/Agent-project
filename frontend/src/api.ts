@@ -25,6 +25,7 @@ async function protectedFetch(path: string, init: RequestInit = {}): Promise<Res
   headers.set('Authorization', `Bearer ${accessToken}`);
   const response = await fetch(`/api/v1${path}`, { ...init, headers, credentials: 'omit' });
   if (!response.ok) {
+    if (response.status === 401) throw new ApiError(401, '访问令牌已失效，请用启动器重新打开应用。');
     let message = `请求未完成（HTTP ${response.status}）`;
     try {
       const body = await response.json();
@@ -45,6 +46,10 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
 const json = (body: unknown): RequestInit => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 export const api = {
   health: () => request<Record<string, unknown>>('/health'),
+  shutdown: async () => {
+    await protectedFetch('/application/shutdown', json({}));
+    accessToken = ''; sessionStorage.removeItem(TOKEN_KEY);
+  },
   providers: () => request<ProviderCatalog>('/settings/providers'),
   saveProvider: (id: string | null, values: ProviderUpdate | ProviderKeyUpdate) => request<Provider>(id ? `/settings/providers/${encodeURIComponent(id)}` : '/settings/providers', { ...json(values), method: id ? 'PUT' : 'POST' }),
   defaultProvider: (selection: ModelSelection) => request<ProviderCatalog>('/settings/providers/default', json(selection)),

@@ -23,11 +23,13 @@ ACTIVE = {"running", "awaiting_input", "cancelling"}
 
 class ApplicationLock:
     """Prevent two service processes from recovering/cleaning each other's active runtime."""
-    def __init__(self, root):
+    def __init__(self, root, *, filename='.application.lock'):
         root = Path(root).absolute()
-        managed_path(root, ".application.lock")
+        managed_path(root, filename)
         root.mkdir(parents=True, exist_ok=True)
-        self.file = managed_path(root, ".application.lock").open("a+b")
+        root = root.resolve(strict=True)
+        self.root = root
+        self.file = managed_path(root, filename).open("a+b")
         self.file.seek(0)
         self.file.write(b"0")
         self.file.flush()
@@ -41,7 +43,7 @@ class ApplicationLock:
                 fcntl.flock(self.file, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
             self.file.close()
-            raise AppError("already_running", "该数据目录已有应用运行，请先关闭已有窗口。", 409) from None
+            raise AppError("already_running", "该数据目录已有应用运行，请退出原服务后重试。", 409) from None
 
     def close(self):
         if not self.file.closed:
@@ -91,6 +93,7 @@ class TaskManager:
     def __init__(self, settings, *, worker_target=agent_worker):
         self.settings, self.worker_target = settings, worker_target
         self.application_lock = ApplicationLock(settings.data_dir)
+        settings = replace(settings, data_dir=self.application_lock.root)
         self.store = Store(settings.data_dir)
         # Use the canonical storage root in workers, export registration and
         # their temporary directories; nominal AppData may be virtualized.
@@ -100,6 +103,7 @@ class TaskManager:
         self.active = None
         self.runtime = None
         self.closed = False
+        self.stopping = False
         self.secrets = tuple(set(secret_values(settings)) | set(self.providers.secret_values()))
         self._health = None
         # Recover metadata only. Never restore an interrupted graph or auto-run a task.
@@ -202,6 +206,8 @@ class TaskManager:
 
     def start(self, conversation_id, task, request_id, context_ids=None, provider_id=None, model_id=None):
         with self.lock:
+            if self.closed or self.stopping:
+                raise AppError('application_stopping', '应用正在退出，请重新启动后分析。', 503)
             if contains_secret(task, self.secrets):
                 raise AppError("secret_in_input", "任务包含敏感配置，拒绝保存。")
             conversation = self.store.require("conversations", conversation_id)

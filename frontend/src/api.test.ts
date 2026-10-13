@@ -53,4 +53,19 @@ describe('protected local API', () => {
     await api.start('c', '任务', undefined, 'request-unique', { provider_id: 'deepseek', model_id: 'deepseek-v4-pro' });
     expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ task: '任务', request_id: 'request-unique', provider_id: 'deepseek', model_id: 'deepseek-v4-pro' });
   });
+
+  it('shuts down through the protected endpoint and clears the expired application token after acceptance', async () => {
+    window.history.replaceState(null, '', '/#token=application-token'); initializeToken();
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: 'stopping' }), { status: 202 })); vi.stubGlobal('fetch', fetch);
+    await api.shutdown();
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/application/shutdown');
+    expect(fetch.mock.calls[0][1].method).toBe('POST');
+    expect(fetch.mock.calls[0][1].headers.get('Authorization')).toBe('Bearer application-token');
+    expect(sessionStorage.getItem('labweaver.application-token')).toBeNull();
+  });
+
+  it('explains a stale launcher token without displaying server authentication details', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail: 'raw secret token details' }), { status: 401 })));
+    await expect(api.providers()).rejects.toThrow('访问令牌已失效，请用启动器重新打开应用');
+  });
 });

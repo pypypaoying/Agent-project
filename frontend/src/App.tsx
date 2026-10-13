@@ -24,7 +24,7 @@ const displayColumn = (value: unknown): string => {
   return text(value);
 };
 
-function Icon({ name }: { name: 'plus' | 'attach' | 'panel' | 'arrow' | 'stop' | 'file' | 'download' | 'close' | 'check' | 'settings' }) {
+function Icon({ name }: { name: 'plus' | 'attach' | 'panel' | 'arrow' | 'stop' | 'file' | 'download' | 'close' | 'check' | 'settings' | 'exit' }) {
   const paths = {
     plus: <path d="M12 5v14M5 12h14" />,
     attach: <path d="m9 14 6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l9-9" />,
@@ -36,6 +36,7 @@ function Icon({ name }: { name: 'plus' | 'attach' | 'panel' | 'arrow' | 'stop' |
     close: <path d="m6 6 12 12M18 6 6 18" />,
     check: <path d="m5 12 4 4 10-10" />,
     settings: <><path d="m9 3-1 3-3 1-2 3 2 2-1 3 3 2 1 3h4l1-3 3-1 2-3-2-2 1-3-3-2-1-3z" /><circle cx="11" cy="11" r="3" /></>,
+    exit: <><path d="M12 3v9M6 6a9 9 0 1 0 12 0" /></>,
   };
   return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
@@ -176,6 +177,7 @@ export function App({ authenticated }: { authenticated: boolean }) {
   const [catalog, setCatalog] = useState<ProviderCatalog | null>(null);
   const [selection, setSelection] = useState<ModelSelection | null>(null);
   const [page, setPage] = useState<'chat' | 'settings'>('chat');
+  const [exited, setExited] = useState(false);
   const [settingsProvider, setSettingsProvider] = useState<string | undefined>();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -239,13 +241,13 @@ export function App({ authenticated }: { authenticated: boolean }) {
   }, [refreshList, conversations, detail]);
 
   useEffect(() => {
-    if (!authenticated) return;
-    void refreshList().catch(reason => setError(reason instanceof ApiError && reason.status === 401 ? '访问令牌已失效，请使用启动器重新打开应用。' : reason.message));
-    void api.providers().then(result => { setCatalog(result); setSelection(previous => previous ?? defaultSelection(result)); }).catch(() => setError('模型供应商列表未能加载，请检查本地服务。'));
-  }, [authenticated, refreshList]);
+    if (!authenticated || exited) return;
+    void refreshList().catch(reason => setError(reason instanceof ApiError && reason.status === 401 ? '访问令牌已失效，请用启动器重新打开应用。' : reason.message));
+    void api.providers().then(result => { setCatalog(result); setSelection(previous => previous ?? defaultSelection(result)); }).catch(reason => setError(reason instanceof ApiError && reason.status === 401 ? '访问令牌已失效，请用启动器重新打开应用。' : '模型供应商列表未能加载，请检查本地服务。'));
+  }, [authenticated, exited, refreshList]);
 
   useEffect(() => {
-    if (!activeRun || activeRun.status === 'awaiting_input') return;
+    if (exited || !activeRun || activeRun.status === 'awaiting_input') return;
     const abort = new AbortController();
     let disposed = false; let lastSeq = 0;
     const initial = activeRun.events ?? [];
@@ -282,7 +284,7 @@ export function App({ authenticated }: { authenticated: boolean }) {
     };
     void loop();
     return () => { disposed = true; abort.abort(); };
-  }, [activeRun?.id, activeRun?.status, refreshDetail, refreshList]);
+  }, [activeRun?.id, activeRun?.status, exited, refreshDetail, refreshList]);
 
   useEffect(() => { bottom.current?.scrollIntoView?.({ behavior: 'smooth', block: 'end' }); }, [liveAnswer, detail?.runs.length]);
 
@@ -342,6 +344,14 @@ export function App({ authenticated }: { authenticated: boolean }) {
     catch (reason) { setError((reason as Error).message); } finally { setBusy(false); }
   };
   const configureProvider = (id?: string) => { setSettingsProvider(id); setPage('settings'); composing.current = false; };
+  const exitApplication = async () => {
+    if (busy || activeRun || health?.active_run_id || exited) return;
+    if (!window.confirm('退出 LabWeaver 并停止本地服务？已保存的对话和成果会保留。')) return;
+    setBusy(true); setError('');
+    try { await api.shutdown(); setExited(true); }
+    catch (reason) { setError(reason instanceof ApiError && reason.status === 409 ? '还有活动任务，请先停止或等待任务完成后退出。' : (reason as Error).message); }
+    finally { setBusy(false); }
+  };
   const providersUpdated = (next: ProviderCatalog) => {
     const defaultChanged = catalog?.default_provider_id !== next.default_provider_id || catalog?.default_model_id !== next.default_model_id;
     setCatalog(next); setSelection(previous => !defaultChanged && next.providers.some(provider => provider.id === previous?.provider_id && provider.models.includes(previous.model_id)) ? previous : defaultSelection(next));
@@ -349,14 +359,15 @@ export function App({ authenticated }: { authenticated: boolean }) {
   };
 
   if (!authenticated) return <main className="access-screen"><span className="brand-dot" /><h1>LabWeaver</h1><p>请通过正式启动器打开应用，以获取本次运行的本地访问令牌。</p><p className="muted">已打开的页面失效时，请重新运行启动器。模型供应商在应用设置中配置。</p></main>;
+  if (exited) return <main className="access-screen"><span className="brand-dot" /><h1>应用已退出</h1><p>本地服务正在关闭，已保存的对话与成果会保留。</p><p className="muted">可以关闭当前页面。再次使用时，请重新双击 LabWeaver 启动器。</p></main>;
 
   return <div className={`app-shell ${panel && page === 'chat' ? 'panel-open' : ''}`} onDragOver={event => { event.preventDefault(); if (page === 'chat' && event.dataTransfer.types.includes('Files')) setDragging(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false); }} onDrop={event => { event.preventDefault(); setDragging(false); if (page === 'chat') void uploadFiles(Array.from(event.dataTransfer.files)); }}>
     <nav className="sidebar" aria-label="对话导航"><div className="logo"><span className="brand-dot" /><strong>LabWeaver</strong><span className="logo-caption">本地数据分析</span></div>
       <button className="new-chat" disabled={busy} onClick={() => void newConversation()}><Icon name="plus" />新建对话</button>
       <div className="nav-caption">对话历史</div><div className="conversation-list">{conversations.map(conversation => <button className={`conversation-item ${detail?.conversation.id === conversation.id ? 'selected' : ''}`} key={conversation.id} data-conversation-id={conversation.id} disabled={busy} onClick={() => void openConversation(conversation.id)} title={conversation.title}>{conversation.title || '未命名对话'}</button>)}{!conversations.length && <p className="muted nav-empty">还没有对话</p>}</div>
-      <footer className="sidebar-footer"><button className={`settings-nav ${page === 'settings' ? 'selected' : ''}`} aria-label="设置" onClick={() => configureProvider()}><Icon name="settings" /><span>设置</span></button><span className="local-indicator" />本机运行 · 历史保存在本地<span className="muted">分析执行使用 Docker；任务与资料会发给配置的模型服务。</span></footer>
+      <footer className="sidebar-footer"><div className="sidebar-app-actions"><button className={`settings-nav ${page === 'settings' ? 'selected' : ''}`} aria-label="设置" onClick={() => configureProvider()}><Icon name="settings" /><span>设置</span></button><button className="exit-app" aria-label="退出应用" title={modelLocked ? '请先停止或等待活动任务完成' : '退出应用并停止本地服务'} disabled={modelLocked} onClick={() => void exitApplication()}><Icon name="exit" /><span>退出应用</span></button></div>{Boolean(activeRun || health?.active_run_id) && <span className="muted exit-help">先停止或完成任务再退出</span>}<span className="local-indicator" />本机运行 · 历史保存在本地<span className="muted">分析执行使用 Docker；任务与资料会发给配置的模型服务。</span></footer>
     </nav>
-    {page === 'settings' ? <ProviderSettings key={settingsProvider ?? catalog?.default_provider_id ?? 'loading'} catalog={catalog} initialProviderId={settingsProvider} locked={modelLocked} onUpdated={providersUpdated} onBack={() => setPage('chat')} /> : <main className="chat-main"><header className="topbar"><div><strong>{detail?.conversation.title || '开始一次数据分析'}</strong><span className="muted">{health?.mode === 'offline' ? '确定性离线演示' : '通用 CSV 分析助手'}</span></div><button className={`icon-button ${panel ? 'selected' : ''}`} aria-label="查看执行面板" aria-pressed={panel} onClick={() => setPanel(!panel)}><Icon name="panel" /></button></header>
+    {page === 'settings' ? <ProviderSettings key={settingsProvider ?? catalog?.default_provider_id ?? 'loading'} catalog={catalog} initialProviderId={settingsProvider} locked={modelLocked} loadError={error} onUpdated={providersUpdated} onBack={() => setPage('chat')} /> : <main className="chat-main"><header className="topbar"><div><strong>{detail?.conversation.title || '开始一次数据分析'}</strong><span className="muted">{health?.mode === 'offline' ? '确定性离线演示' : '通用 CSV 分析助手'}</span></div><button className={`icon-button ${panel ? 'selected' : ''}`} aria-label="查看执行面板" aria-pressed={panel} onClick={() => setPanel(!panel)}><Icon name="panel" /></button></header>
       {error && <div className="notice error-notice" role="alert"><span>{error}</span><button className="icon-button" aria-label="关闭错误提示" onClick={() => setError('')}><Icon name="close" /></button></div>}
       {connection && <div className="notice muted">{connection}</div>}
       {health && (() => { const model = health.model as { ready?: boolean; error?: unknown } | undefined; const docker = health.docker as { ready?: boolean; error?: unknown } | undefined;

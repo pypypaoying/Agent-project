@@ -56,6 +56,15 @@ test('repeated New Conversation clicks reuse the same empty draft', async ({ pag
   await expect(button.locator('svg')).toHaveAttribute('width', '20');
 });
 
+test('an expired launcher token gives a clear recovery message instead of a provider loading failure', async ({ page }) => {
+  await page.goto('/#token=an-expired-application-token');
+  await expect(page.getByRole('alert')).toContainText('访问令牌已失效，请用启动器重新打开应用');
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('访问令牌已失效');
+  await expect(page.getByRole('button', { name: '保存配置' })).toBeDisabled();
+  await expect(page).not.toHaveURL(/token=/);
+});
+
 test('provider settings save write-only credentials and clear them when returning to chat', async ({ page }, testInfo) => {
   await page.goto(`/#token=${token}`);
   await page.getByRole('button', { name: '设置', exact: true }).click();

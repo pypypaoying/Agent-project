@@ -4,13 +4,16 @@ import asyncio
 from contextlib import asynccontextmanager
 import hmac
 from pathlib import Path
+import re
 from urllib.parse import urlsplit
+import uuid
 
 from fastapi import FastAPI, File, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
+from starlette.background import BackgroundTask
 
 from .files import preview_artifact, read_registered
 from .manager import ACTIVE, TaskManager
@@ -57,8 +60,11 @@ class Reply(Payload):
     request_id: StrictStr = Field(min_length=8, max_length=80)
 
 
-def create_app(settings, *, manager=None):
+def create_app(settings, *, manager=None, instance_id=None, port=8765, shutdown=None):
     service = manager or TaskManager(settings)
+    from .instances import identity_proof, project_id
+    identity = {'version': 1, 'project': project_id(settings.project_dir), 'port': port,
+                'instance_id': instance_id or uuid.uuid4().hex, 'mode': settings.mode}
 
     @asynccontextmanager
     async def lifespan(app):
@@ -68,6 +74,7 @@ def create_app(settings, *, manager=None):
 
     app = FastAPI(title="LabWeaver Desktop", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.manager = service
+    app.state.shutdown_requested = False
 
     @app.middleware("http")
     async def boundary(request, call_next):
@@ -83,10 +90,13 @@ def create_app(settings, *, manager=None):
             return JSONResponse({"error": {"code": "origin_forbidden", "message": "来源不被允许。"}}, status_code=403)
         if request.url.path.startswith("/api/"):
             auth = request.headers.get("authorization", "")
-            if not hmac.compare_digest(auth.encode(), ("Bearer " + settings.token).encode()):
+            proof_request = request.method == 'GET' and request.url.path == '/api/v1/application/identity'
+            if not proof_request and not hmac.compare_digest(auth.encode(), ("Bearer " + settings.token).encode()):
                 return JSONResponse({"error": {"code": "unauthorized", "message": "请通过应用启动链接打开页面。"}}, status_code=401)
             if "token" in request.query_params:
                 return JSONResponse({"error": {"code": "query_token_forbidden", "message": "令牌不能使用查询参数传递。"}}, status_code=400)
+            if app.state.shutdown_requested and request.method in {'POST', 'PUT', 'PATCH', 'DELETE'} and request.url.path != '/api/v1/application/shutdown':
+                return JSONResponse({'error': {'code': 'application_stopping', 'message': '应用正在退出，请重新启动后操作。'}}, status_code=503)
             if request.method in {"POST", "PUT", "PATCH"}:
                 # Bound even chunked multipart requests before Starlette spools them to disk.
                 parts, size = [], 0
@@ -115,6 +125,27 @@ def create_app(settings, *, manager=None):
     def reject_secret(value):
         if contains_secret(value, service.secrets):
             raise AppError("secret_in_input", "输入包含敏感配置，已拒绝写入聊天或附件。")
+
+    @app.get('/api/v1/application/identity')
+    def application_identity(nonce: str, proof: str):
+        if (not re.fullmatch('[a-f0-9]{64}', nonce) or not re.fullmatch('[a-f0-9]{64}', proof)
+                or not hmac.compare_digest(proof, identity_proof(settings.token, 'launcher', nonce, identity))):
+            raise AppError('unauthorized', '本地服务身份验证失败。', 401)
+        if service.stopping or service.closed:
+            raise AppError('application_stopping', '应用正在退出，请稍后重新启动。', 503)
+        return identity | {'proof': identity_proof(settings.token, 'server', nonce, identity)}
+
+    @app.post('/api/v1/application/shutdown', status_code=202)
+    def shutdown_application():
+        with service.lock:
+            if service.active:
+                raise AppError('task_active', '请先停止或完成当前任务，再退出应用。', 409)
+            if shutdown is None:
+                raise AppError('shutdown_unavailable', '请通过正式启动器运行应用后再退出。', 503)
+            if app.state.shutdown_requested:
+                return {'status': 'stopping'}
+            service.stopping = app.state.shutdown_requested = True
+        return JSONResponse({'status': 'stopping'}, status_code=202, background=BackgroundTask(shutdown))
 
     @app.get("/api/v1/health")
     def health(refresh: bool = False):

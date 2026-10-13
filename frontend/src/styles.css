@@ -143,6 +143,12 @@ textarea::placeholder { color: var(--muted); }
 .model-settings-link { border-top: 1px solid var(--border); display: block; width: 100%; text-align: left; padding: 10px 9px 6px; color: var(--muted); margin-top: 6px; font-size: 12px; }
 .settings-nav { display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 0 13px; font-size: 14px; }
 .settings-nav.selected, .settings-nav:hover { color: var(--accent); }
+.sidebar-app-actions { display: flex; flex-wrap: wrap; width: 100%; gap: 8px; align-items: center; }
+.sidebar-app-actions .settings-nav { width: auto; flex: 1; padding-bottom: 8px; }
+.exit-app { display: flex; align-items: center; gap: 6px; padding: 8px 0; color: var(--muted); font-size: 12px; }
+.exit-app:hover { color: var(--text); }
+.exit-app svg { width: 17px; height: 17px; }
+.sidebar-footer .exit-help { margin: -4px 0 3px; }
 .settings-main { min-width: 0; min-height: 0; overflow: auto; background: var(--bg); }
 .settings-header { padding: 30px 34px 24px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; gap: 20px; }
 .settings-header h1 { font-size: 22px; margin: 0 0 8px; font-weight: 550; }

@@ -43,8 +43,8 @@ export function ModelPicker({ catalog, selection, locked, offline, onSelect, onC
   </div>;
 }
 
-export function ProviderSettings({ catalog, initialProviderId, locked, onUpdated, onBack }: {
-  catalog: ProviderCatalog | null; initialProviderId?: string; locked: boolean;
+export function ProviderSettings({ catalog, initialProviderId, locked, loadError, onUpdated, onBack }: {
+  catalog: ProviderCatalog | null; initialProviderId?: string; locked: boolean; loadError?: string;
   onUpdated: (catalog: ProviderCatalog) => void; onBack: () => void;
 }) {
   const [providerId, setProviderId] = useState<string | null>(initialProviderId ?? catalog?.default_provider_id ?? null);
@@ -68,7 +68,7 @@ export function ProviderSettings({ catalog, initialProviderId, locked, onUpdated
 
   const modelList = () => [...new Set(models.split(/\r?\n/).map(value => value.trim()).filter(Boolean))];
   const unsaved = () => !provider || Boolean(key || clearKey || name.trim() !== provider.name || baseUrl.trim() !== provider.base_url || models !== provider.models.join('\n') || model.trim() !== provider.default_model_id);
-  const safeError = (reason: unknown) => reason instanceof ApiError && [400, 409, 422].includes(reason.status) ? '配置未保存或操作未完成，请检查字段；活动任务结束后再修改配置。' : '操作未完成，请检查服务状态与供应商接口。密钥不会回显。';
+  const safeError = (reason: unknown) => reason instanceof ApiError && reason.status === 401 ? '访问令牌已失效，请用启动器重新打开应用。' : reason instanceof ApiError && [400, 409, 422].includes(reason.status) ? '配置未保存或操作未完成，请检查字段；活动任务结束后再修改配置。' : '操作未完成，请检查服务状态与供应商接口。密钥不会回显。';
   const validate = (): ProviderUpdate | null => {
     const available = modelList();
     if (!name.trim() || !available.length || !model.trim() || !available.includes(model.trim())) { setError('请填写供应商名称、至少一个模型，并将默认模型加入模型列表。'); return null; }
@@ -118,7 +118,8 @@ export function ProviderSettings({ catalog, initialProviderId, locked, onUpdated
 
   return <main className="settings-main"><header className="settings-header"><div><h1>模型供应商</h1><p>主 Agent 与代码 Agent 使用本次选择的同一模型。</p></div><button type="button" className="outline-button" onClick={onBack}>返回聊天</button></header>
     {locked && <p className="notice">有任务运行或等待回复，完成或停止后可修改供应商配置。</p>}
-    {!catalog && <p className="notice">正在加载供应商配置。请先确认本地服务与访问令牌有效。</p>}
+    {loadError && <p className="notice settings-error" role="alert">{loadError}</p>}
+    {!catalog && !loadError && <p className="notice">正在加载供应商配置。请先确认本地服务与访问令牌有效。</p>}
     <div className="settings-content"><aside className="provider-navigation" aria-label="供应商列表">{catalog?.providers.map(item => <button type="button" key={item.id} className={providerId === item.id ? 'selected' : ''} disabled={busy} onClick={() => { setProviderId(item.id); setNotice(''); setError(''); }}><strong>{item.name}</strong><small>{item.has_key ? '已配置密钥' : '未配置密钥'}</small></button>)}<button type="button" className="add-provider" disabled={disabled} onClick={() => { setProviderId(null); setNotice(''); setError(''); }}>＋ 添加兼容供应商</button></aside>
       <section className="provider-form" aria-label="供应商配置"><h2>{provider ? provider.name : '添加兼容供应商'}</h2><p className="muted">支持 OpenAI 兼容接口。模型名称可从接口获取，也可手动填写。</p>
         {error && <p role="alert" className="settings-error">{error}</p>}{notice && <p role="status" className="settings-notice">{notice}</p>}
