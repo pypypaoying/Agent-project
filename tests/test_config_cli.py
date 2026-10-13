@@ -238,7 +238,7 @@ def test_cli_version_stays_available(capsys):
     with pytest.raises(SystemExit) as caught:
         main(["--version"])
     assert caught.value.code == 0
-    assert capsys.readouterr().out.strip() == "LabWeaver 0.2.0"
+    assert capsys.readouterr().out.strip() == "Analyvia 0.2.0"
 
 
 def test_cli_can_run_intake_with_only_configuration(tmp_path, monkeypatch, capsys):

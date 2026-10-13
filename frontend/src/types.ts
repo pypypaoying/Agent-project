@@ -1,5 +1,5 @@
 export type RunStatus = 'running' | 'awaiting_input' | 'cancelling' | 'completed' | 'error' | 'cancelled' | 'interrupted';
-export interface Conversation { id: string; title: string; frozen?: boolean; inputs_frozen?: boolean; updated_at?: string; }
+export interface Conversation { id: string; title: string; pinned?: boolean; active_run_id?: string | null; deletion_pending?: boolean; frozen?: boolean; inputs_frozen?: boolean; updated_at?: string; }
 export interface TablePreview { columns: unknown[]; rows: unknown[][]; row_count: number; offset?: number; }
 export interface ManagedFile {
   id: string; name: string; role?: 'csv' | 'material'; size?: number; media_type?: string;

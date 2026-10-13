@@ -100,6 +100,57 @@ test('provider settings save write-only credentials and clear them when returnin
   await expect(page.getByText('离线演示', { exact: true })).toBeVisible();
 });
 
+test('conversation management persists rename and pin, then permanently deletes its real history and files', async ({ page }, testInfo) => {
+  await start(page, '对话管理.csv', '编号,数量\n001,2\n002,3\n');
+  await send(page, '概览这个 CSV，不需要统计或图表');
+  await expect(page.getByText('已完成', { exact: true })).toBeVisible({ timeout: 60_000 });
+  const selected = page.locator('.conversation-item.selected');
+  const id = (await selected.getAttribute('data-conversation-id'))!;
+  const row = () => page.locator('.conversation-row').filter({ has: page.locator(`[data-conversation-id="${id}"]`) });
+  const openMenu = async () => { await row().hover(); await row().locator('.conversation-menu-trigger').click(); };
+  await openMenu(); await page.getByRole('menuitem', { name: '重命名', exact: true }).click();
+  const name = `数据汇总 ${Date.now()}`;
+  await page.getByRole('textbox', { name: '对话名称' }).fill(name);
+  await page.getByRole('button', { name: '保存名称' }).click();
+  await expect(page.locator('.topbar strong')).toHaveText(name);
+  await openMenu(); await page.getByRole('menuitem', { name: '置顶', exact: true }).click();
+  await expect(row().locator('.conversation-menu-trigger')).toBeEnabled();
+  const headers = { Authorization: `Bearer ${token}` };
+  await expect.poll(async () => { const response = await page.request.get('/api/v1/conversations', { headers }); const records = (await response.json()).conversations; return records[0].id === id && records[0].pinned === true; }).toBe(true);
+  await page.reload(); await page.locator(`[data-conversation-id="${id}"]`).click();
+  await expect(page.locator('.topbar strong')).toHaveText(name);
+  await openMenu(); await expect(page.getByRole('menuitem', { name: '取消置顶', exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('history-menu-desktop.png'), animations: 'disabled' });
+  await page.getByRole('menuitem', { name: '永久删除', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '永久删除对话' });
+  await expect(dialog).toContainText('消息、应用内附件副本和全部分析成果');
+  await page.screenshot({ path: testInfo.outputPath('delete-confirmation-desktop.png'), animations: 'disabled' });
+  await dialog.getByRole('button', { name: '取消', exact: true }).click();
+  await page.setViewportSize({ width: 820, height: 700 }); await page.emulateMedia({ colorScheme: 'dark' });
+  await openMenu(); await page.screenshot({ path: testInfo.outputPath('history-menu-small-dark.png'), animations: 'disabled' });
+  await page.keyboard.press('Escape');
+  const stored = await page.request.get(`/api/v1/conversations/${id}`, { headers });
+  expect(stored.ok()).toBe(true);
+  const detail = await stored.json();
+  expect(detail.messages.length).toBeGreaterThan(0);
+  const fileIds = [...detail.files, ...detail.runs.flatMap((run: { downloads: { id: string }[] }) => run.downloads)].map((file: { id: string }) => file.id);
+  expect(fileIds.length).toBeGreaterThan(1);
+  await page.getByRole('button', { name: '新建对话', exact: true }).click();
+  await expect(page.locator('.conversation-item.selected')).not.toHaveAttribute('data-conversation-id', id);
+  const draftId = await page.locator('.conversation-item.selected').getAttribute('data-conversation-id');
+  expect(draftId).not.toBe(id);
+  await page.locator(`[data-conversation-id="${id}"]`).click();
+  await openMenu(); await page.getByRole('menuitem', { name: '永久删除', exact: true }).click();
+  await page.setViewportSize({ width: 820, height: 700 }); await page.emulateMedia({ colorScheme: 'dark' });
+  await page.screenshot({ path: testInfo.outputPath('delete-confirmation-small-dark.png'), animations: 'disabled' });
+  await page.getByRole('dialog').getByRole('button', { name: '永久删除', exact: true }).click();
+  await expect(page.locator(`[data-conversation-id="${id}"]`)).toHaveCount(0);
+  await expect(page.locator('.conversation-item.selected')).toHaveAttribute('data-conversation-id', draftId!);
+  expect((await page.request.get(`/api/v1/conversations/${id}`, { headers })).status()).toBe(404);
+  for (const fileId of fileIds) expect((await page.request.get(`/api/v1/files/${fileId}/content`, { headers })).status()).toBe(404);
+  await page.reload(); await expect(page.locator(`[data-conversation-id="${id}"]`)).toHaveCount(0);
+});
+
 test('CSV overview is genuinely profiled, streamed, persisted and downloadable', async ({ page }, testInfo) => {
   await start(page, '中文问卷.csv', '编号,评分,备注\n001,4,NA\n002,2,\n');
   const responses: string[] = [];
@@ -125,7 +176,7 @@ test('CSV overview is genuinely profiled, streamed, persisted and downloadable',
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.emulateMedia({ colorScheme: 'light' });
   await page.reload();
-  const history = page.locator('.conversation-item').first();
+  const history = page.locator(`[data-conversation-id="${run.conversation_id}"]`);
   await history.click();
   await expect(page.getByText(/已读取完整 CSV：2 行/)).toBeVisible();
   await page.getByText(/报告、代码与全部文件/).click();
@@ -144,6 +195,10 @@ test('format clarification resumes the real graph once, then another task uses t
   // A cold Windows worker may spend >25 seconds importing the existing Agent stack.
   // Wait for the actual interrupt, without interpreting a loading indicator as success.
   await expect(question).toBeVisible({ timeout: 60_000 });
+  const activeRow = page.locator('.conversation-row').filter({ has: page.locator('.conversation-item.selected') });
+  await activeRow.hover(); await activeRow.locator('.conversation-menu-trigger').click();
+  await expect(page.getByRole('menuitem', { name: '永久删除', exact: true })).toBeDisabled();
+  await page.keyboard.press('Escape');
   await question.getByRole('textbox', { name: '澄清回复' }).fill('1');
   await question.getByRole('button', { name: '回复并继续' }).click();
   await expect(page.getByText('已完成', { exact: true })).toBeVisible({ timeout: 60_000 });
@@ -167,6 +222,8 @@ for (const example of [
     await send(page, example.task);
     await expect(page.getByText('已完成', { exact: true })).toBeVisible({ timeout: 90_000 });
     const progress = page.getByRole('region', { name: '真实执行过程' });
+    const earlier = progress.locator('.older-progress');
+    if (await earlier.count() && !await progress.getByText('代码 Agent · 第 1 次 Python 执行').isVisible()) await earlier.locator('summary').click();
     await expect(progress.getByText('代码 Agent · 第 1 次 Python 执行')).toBeVisible();
     await expect(page.locator('table').first()).toBeVisible();
     if (example.expected) await expect(page.locator('img.chart')).toBeVisible();

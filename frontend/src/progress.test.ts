@@ -57,4 +57,42 @@ describe('genuine central execution progress', () => {
     expect(steps[0].detail).toBe('等待成果保存与登记');
     expect(steps[2].title).toBe('成果已核验、保存并登记');
   });
+
+  it('pairs actual model requests by role, delegation and call, without reading generation text', () => {
+    const steps = summarizeProgress([
+      event(1, 'model_start', { role: 'main', call: 1 }),
+      event(2, 'model_end', { role: 'main', call: 1, status: 'completed', elapsed_seconds: 2.56, finish_reason: 'tool_calls', reasoning: 'private reasoning' }),
+      event(3, 'model_start', { role: 'analysis', parent_call_id: 'first-delegation', call: 1 }),
+      event(4, 'model_end', { role: 'analysis', parent_call_id: 'first-delegation', call: 1, status: 'completed', elapsed_seconds: 3 }),
+      event(5, 'model_start', { role: 'analysis', parent_call_id: 'second-delegation', call: 1 }),
+    ], true);
+    expect(steps).toHaveLength(3);
+    expect(steps[0]).toMatchObject({ title: '主 Agent · 第 1 次模型生成', status: '已返回', detail: '耗时 2.6 秒' });
+    expect(steps[2]).toMatchObject({ title: '代码 Agent · 第 1 次模型生成', state: 'running', status: '生成中' });
+    expect(JSON.stringify(steps)).not.toContain('private reasoning');
+  });
+
+  it('shows a real truncated response and one correction, without keeping a finished retry spinning', () => {
+    const steps = summarizeProgress([
+      event(1, 'model_end', { role: 'analysis', parent_call_id: 'd', call: 1, status: 'completed', finish_reason: 'length', elapsed_seconds: 12 }),
+      event(2, 'model_retry', { role: 'analysis', parent_call_id: 'd', call: 1, error_code: 'model_output_truncated' }),
+      event(3, 'model_start', { role: 'analysis', parent_call_id: 'd', call: 2 }),
+      event(4, 'model_end', { role: 'analysis', parent_call_id: 'd', call: 2, status: 'completed', finish_reason: 'tool_calls', elapsed_seconds: 7 }),
+    ], true);
+    expect(steps[0]).toMatchObject({ state: 'neutral', status: '响应截断' });
+    expect(steps[1]).toMatchObject({ title: '代码 Agent · 模型响应截断，进行一次修正', state: 'neutral', status: '已返回' });
+    expect(steps[2].detail).toBe('耗时 7.0 秒');
+  });
+
+  it('uses the actual retry reason and does not turn a model return into task completion', () => {
+    const steps = summarizeProgress([event(1, 'model_retry', { role: 'main', call: 2, error_code: 'invalid_tool_arguments' })], true);
+    expect(steps[0]).toMatchObject({ title: '主 Agent · 工具参数无效，进行一次修正', state: 'running', status: '修正中' });
+    expect(summarizeProgress([event(1, 'model_end', { role: 'main', call: 3, status: 'error' })], false)[0]).toMatchObject({ state: 'error', status: '请求失败' });
+  });
+
+  it('distinguishes a real successful process from missing task deliverables', () => {
+    const steps = summarizeProgress([event(1, 'execution_end', { tool_call_id: 'p', attempt: 1, delivery_status: 'error', missing_deliverables: ['comparison-table', 'trend-chart'], record: { status: 'completed', exit_code: 0, elapsed_seconds: 2 } })], true);
+    expect(steps[0]).toMatchObject({ state: 'error', status: '成果缺失', detail: '退出码 0 · 耗时 2.0 秒 · 代码已运行，缺少成果：comparison-table、trend-chart' });
+    expect(steps[0].status).not.toBe('完成');
+  });
 });

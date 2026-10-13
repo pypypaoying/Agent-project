@@ -3,6 +3,8 @@ import ReactMarkdown from 'react-markdown';
 import { api, ApiError, downloadFile, streamEvents } from './api';
 import { summarizeProgress, type ProgressStep } from './progress';
 import { defaultSelection, ModelPicker, providerReady, ProviderSettings } from './providers';
+import { ConversationDialog, ConversationRow, type ConversationAction } from './conversations';
+import { BRAND_NAME, BrandMark } from './brand';
 import type { Artifact, Conversation, ConversationDetail, ManagedFile, Message, ModelSelection, ProviderCatalog, Run, RunEvent, RunStatus, TablePreview } from './types';
 
 const activeStatuses: RunStatus[] = ['running', 'awaiting_input', 'cancelling'];
@@ -41,11 +43,11 @@ function Icon({ name }: { name: 'plus' | 'attach' | 'panel' | 'arrow' | 'stop' |
   return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
 
-const isEmptyDraft = (candidate: ConversationDetail) => !candidate.conversation.frozen && !candidate.conversation.inputs_frozen && candidate.files.length === 0 && candidate.messages.length === 0 && candidate.runs.length === 0;
+const isEmptyDraft = (candidate: ConversationDetail) => !candidate.conversation.deletion_pending && !candidate.conversation.frozen && !candidate.conversation.inputs_frozen && candidate.files.length === 0 && candidate.messages.length === 0 && candidate.runs.length === 0;
 async function findEmptyDraft(conversations: Conversation[], current: ConversationDetail | null): Promise<ConversationDetail | null> {
   if (current && isEmptyDraft(current)) return current;
   for (const conversation of conversations) {
-    if (conversation.id === current?.conversation.id || conversation.frozen || conversation.inputs_frozen) continue;
+    if (conversation.id === current?.conversation.id || conversation.deletion_pending || conversation.frozen || conversation.inputs_frozen) continue;
     try {
       const candidate = await api.conversation(conversation.id);
       if (isEmptyDraft(candidate)) return candidate;
@@ -73,6 +75,11 @@ function DataTable({ preview }: { preview: TablePreview }) {
 
 function MetricOutput({ value }: { value: unknown }) {
   if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const object = value as Record<string, unknown>;
+    if (typeof object.report_markdown === 'string' && new TextEncoder().encode(object.report_markdown).length <= 65536) {
+      const remaining = Object.fromEntries(Object.entries(object).filter(([key]) => key !== 'report_markdown'));
+      return <><Markdown>{object.report_markdown}</Markdown>{Object.keys(remaining).length > 0 && <MetricOutput value={remaining} />}</>;
+    }
     return <dl className="metric-grid">{Object.entries(value as Record<string, unknown>).map(([label, metric]) => <div key={label}><dt>{label}</dt><dd>{text(metric)}</dd></div>)}</dl>;
   }
   return <div className="metric-value">{text(value)}</div>;
@@ -140,7 +147,7 @@ function RunCard({ run, liveAnswer, messages, events, onError, onRerun }: { run:
     {run.task && <div className="user-message"><span className="message-label">你</span><p>{run.task}</p></div>}
     {messages.filter(message => message.question_id && (message.role === 'user' || message.state === 'answered')).map(message => <div key={message.id} className={`confirmation-message ${message.role === 'user' ? 'confirmed-reply' : ''}`}><span className="message-label">{message.role === 'user' ? '你的确认回复' : 'Agent 澄清'}</span><p>{message.content}</p></div>)}
     <div className="assistant-message">
-      <div className="assistant-heading"><span className="brand-dot small" /><strong>LabWeaver</strong><span className={`status status-${run.status}`}>{labels[run.status]}</span></div>
+      <div className="assistant-heading"><BrandMark className="small" /><strong>{BRAND_NAME}</strong><span className={`status status-${run.status}`}>{labels[run.status]}</span></div>
       {run.model_selection && <p className="run-model-label muted">{run.model_selection.provider_name ?? run.model_selection.provider_id} · {run.model_selection.model_id}</p>}
       <RunProgress run={run} events={events} />
       {(liveAnswer || final) && <><Markdown>{final || liveAnswer || ''}</Markdown>{provisional && <span className="muted verification">正文待核验，尚未确认交付完成</span>}</>}
@@ -154,7 +161,7 @@ function RunCard({ run, liveAnswer, messages, events, onError, onRerun }: { run:
 }
 
 function ExecutionPanel({ events, run, onClose, onError }: { events: RunEvent[]; run?: Run; onClose: () => void; onError: (message: string) => void }) {
-  const names: Record<string, string> = { running: '任务运行', completed: '交付完成', error: '执行未完成', cancelled: '任务停止', interrupted: '运行中断', cancelling: '正在停止', artifacts_saved: '已保存部分成果', container_lifecycle: '沙箱生命周期', plan: '任务计划', tool_start: '工具开始', tool_end: '工具结束', execution_start: '执行 Python', execution_end: '执行结果', retrieval_result: '资料检索', material_search: '资料检索', completion_feedback: '结果核验', saving: '保存成果', validated: '执行证据核验', awaiting_input: '等待用户回复' };
+  const names: Record<string, string> = { running: '任务运行', completed: '交付完成', error: '执行未完成', cancelled: '任务停止', interrupted: '运行中断', cancelling: '正在停止', artifacts_saved: '已保存部分成果', container_lifecycle: '沙箱生命周期', plan: '任务计划', tool_start: '工具开始', tool_end: '工具结束', model_start: '模型请求开始', model_end: '模型请求结果', model_retry: '模型响应修正', execution_start: '执行 Python', execution_end: '执行结果', retrieval_result: '资料检索', material_search: '资料检索', completion_feedback: '结果核验', saving: '保存成果', validated: '执行证据核验', awaiting_input: '等待用户回复' };
   const detailEvents = events.filter(event => event.type !== 'answer_delta');
   return <aside className="execution-panel" aria-label="执行面板"><header><strong>执行与成果</strong><button className="icon-button" aria-label="关闭执行面板" onClick={onClose}><Icon name="close" /></button></header>
     {run && <div className={`panel-state status-${run.status}`}>{labels[run.status]}</div>}
@@ -190,6 +197,8 @@ export function App({ authenticated }: { authenticated: boolean }) {
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [liveAnswer, setLiveAnswer] = useState('');
   const [connection, setConnection] = useState('');
+  const [conversationAction, setConversationAction] = useState<ConversationAction | null>(null);
+  const [conversationError, setConversationError] = useState('');
   const uploadInput = useRef<HTMLInputElement>(null);
   const taskInput = useRef<HTMLTextAreaElement>(null);
   const bottom = useRef<HTMLDivElement>(null);
@@ -344,9 +353,51 @@ export function App({ authenticated }: { authenticated: boolean }) {
     catch (reason) { setError((reason as Error).message); } finally { setBusy(false); }
   };
   const configureProvider = (id?: string) => { setSettingsProvider(id); setPage('settings'); composing.current = false; };
+  const conversationActive = (conversation: Conversation) => Boolean(conversation.active_run_id || conversation.id === detail?.conversation.id && activeRun);
+  const startConversationAction = (kind: 'rename' | 'delete', conversation: Conversation) => { setConversationError(''); setConversationAction({ kind, conversation }); };
+  const pinConversation = async (conversation: Conversation) => {
+    if (busy) return;
+    setBusy(true); setError('');
+    try {
+      const updated = await api.updateConversation(conversation.id, { pinned: !conversation.pinned });
+      if (detail?.conversation.id === updated.id) setDetail(previous => previous ? { ...previous, conversation: updated } : previous);
+      await refreshList();
+    } catch (reason) { setError((reason as Error).message); }
+    finally { setBusy(false); }
+  };
+  const submitConversationAction = async (title?: string) => {
+    if (!conversationAction || busy) return;
+    const { kind } = conversationAction;
+    const conversation = conversations.find(item => item.id === conversationAction.conversation.id) ?? conversationAction.conversation;
+    if (kind === 'delete' && conversationActive(conversation)) { setConversationError('该对话有活动任务，请先停止或等待任务完成。'); return; }
+    setBusy(true); setConversationError('');
+    let removed = false;
+    try {
+      if (kind === 'rename') {
+        const updated = await api.updateConversation(conversation.id, { title });
+        if (detail?.conversation.id === updated.id) setDetail(previous => previous ? { ...previous, conversation: updated } : previous);
+      } else {
+        const result = await api.deleteConversation(conversation.id);
+        if (!result.deleted || result.conversation_id !== conversation.id) throw new Error('对话删除结果未通过核对，请刷新后检查。');
+        removed = true;
+        const remaining = conversations.filter(item => item.id !== conversation.id); setConversations(remaining);
+        if (displayedConversation.current === conversation.id) {
+          displayedConversation.current = null; setDetail(null); setPage('chat'); setTask(''); setReply(''); setEvents([]); setLiveAnswer(''); setSelectedContexts([]); setContextsExplicit(false); setConnection(''); setPanel(false);
+          const draft = await findEmptyDraft(remaining, null);
+          if (draft) { displayedConversation.current = draft.conversation.id; setDetail(draft); }
+        }
+      }
+      await refreshList(); setConversationAction(null);
+    } catch (reason) {
+      const message = reason instanceof ApiError && reason.status === 409 ? '该对话有活动任务，请先停止或等待任务完成后删除。' : (reason as Error).message;
+      if (removed) { setConversationAction(null); setError(`对话已删除，但列表刷新未完成：${message}`); }
+      else setConversationError(message);
+      if (kind === 'delete' && !removed) { try { await refreshList(); } catch { /* Keep the deletion error; a failed refresh is not evidence of removal. */ } }
+    } finally { setBusy(false); }
+  };
   const exitApplication = async () => {
     if (busy || activeRun || health?.active_run_id || exited) return;
-    if (!window.confirm('退出 LabWeaver 并停止本地服务？已保存的对话和成果会保留。')) return;
+    if (!window.confirm(`退出 ${BRAND_NAME} 并停止本地服务？已保存的对话和成果会保留。`)) return;
     setBusy(true); setError('');
     try { await api.shutdown(); setExited(true); }
     catch (reason) { setError(reason instanceof ApiError && reason.status === 409 ? '还有活动任务，请先停止或等待任务完成后退出。' : (reason as Error).message); }
@@ -358,13 +409,13 @@ export function App({ authenticated }: { authenticated: boolean }) {
     void api.health().then(setHealth).catch(() => {});
   };
 
-  if (!authenticated) return <main className="access-screen"><span className="brand-dot" /><h1>LabWeaver</h1><p>请通过正式启动器打开应用，以获取本次运行的本地访问令牌。</p><p className="muted">已打开的页面失效时，请重新运行启动器。模型供应商在应用设置中配置。</p></main>;
-  if (exited) return <main className="access-screen"><span className="brand-dot" /><h1>应用已退出</h1><p>本地服务正在关闭，已保存的对话与成果会保留。</p><p className="muted">可以关闭当前页面。再次使用时，请重新双击 LabWeaver 启动器。</p></main>;
+  if (!authenticated) return <main className="access-screen"><BrandMark /><h1>{BRAND_NAME}</h1><p>请通过正式启动器打开应用，以获取本次运行的本地访问令牌。</p><p className="muted">已打开的页面失效时，请重新运行启动器。模型供应商在应用设置中配置。</p></main>;
+  if (exited) return <main className="access-screen"><BrandMark /><h1>应用已退出</h1><p>本地服务正在关闭，已保存的对话与成果会保留。</p><p className="muted">可以关闭当前页面。再次使用时，请重新双击 Analyvia 启动器。</p></main>;
 
   return <div className={`app-shell ${panel && page === 'chat' ? 'panel-open' : ''}`} onDragOver={event => { event.preventDefault(); if (page === 'chat' && event.dataTransfer.types.includes('Files')) setDragging(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false); }} onDrop={event => { event.preventDefault(); setDragging(false); if (page === 'chat') void uploadFiles(Array.from(event.dataTransfer.files)); }}>
-    <nav className="sidebar" aria-label="对话导航"><div className="logo"><span className="brand-dot" /><strong>LabWeaver</strong><span className="logo-caption">本地数据分析</span></div>
+    <nav className="sidebar" aria-label="对话导航"><div className="logo"><BrandMark /><strong>{BRAND_NAME}</strong><span className="logo-caption">本地数据分析</span></div>
       <button className="new-chat" disabled={busy} onClick={() => void newConversation()}><Icon name="plus" />新建对话</button>
-      <div className="nav-caption">对话历史</div><div className="conversation-list">{conversations.map(conversation => <button className={`conversation-item ${detail?.conversation.id === conversation.id ? 'selected' : ''}`} key={conversation.id} data-conversation-id={conversation.id} disabled={busy} onClick={() => void openConversation(conversation.id)} title={conversation.title}>{conversation.title || '未命名对话'}</button>)}{!conversations.length && <p className="muted nav-empty">还没有对话</p>}</div>
+      <div className="nav-caption">对话历史</div><div className="conversation-list">{conversations.map(conversation => <ConversationRow key={conversation.id} conversation={conversation} selected={detail?.conversation.id === conversation.id} busy={busy} active={conversationActive(conversation)} onOpen={() => void openConversation(conversation.id)} onAction={kind => startConversationAction(kind, conversation)} onPin={() => void pinConversation(conversation)} />)}{!conversations.length && <p className="muted nav-empty">还没有对话</p>}</div>
       <footer className="sidebar-footer"><div className="sidebar-app-actions"><button className={`settings-nav ${page === 'settings' ? 'selected' : ''}`} aria-label="设置" onClick={() => configureProvider()}><Icon name="settings" /><span>设置</span></button><button className="exit-app" aria-label="退出应用" title={modelLocked ? '请先停止或等待活动任务完成' : '退出应用并停止本地服务'} disabled={modelLocked} onClick={() => void exitApplication()}><Icon name="exit" /><span>退出应用</span></button></div>{Boolean(activeRun || health?.active_run_id) && <span className="muted exit-help">先停止或完成任务再退出</span>}<span className="local-indicator" />本机运行 · 历史保存在本地<span className="muted">分析执行使用 Docker；任务与资料会发给配置的模型服务。</span></footer>
     </nav>
     {page === 'settings' ? <ProviderSettings key={settingsProvider ?? catalog?.default_provider_id ?? 'loading'} catalog={catalog} initialProviderId={settingsProvider} locked={modelLocked} loadError={error} onUpdated={providersUpdated} onBack={() => setPage('chat')} /> : <main className="chat-main"><header className="topbar"><div><strong>{detail?.conversation.title || '开始一次数据分析'}</strong><span className="muted">{health?.mode === 'offline' ? '确定性离线演示' : '通用 CSV 分析助手'}</span></div><button className={`icon-button ${panel ? 'selected' : ''}`} aria-label="查看执行面板" aria-pressed={panel} onClick={() => setPanel(!panel)}><Icon name="panel" /></button></header>
@@ -375,7 +426,7 @@ export function App({ authenticated }: { authenticated: boolean }) {
       })()}
       {typeof health?.active_run_id === 'string' && health.active_run_id !== activeRun?.id && <div className="notice"><span>其他对话有活动任务，完成或停止后可开始新分析。</span><button className="link-button" onClick={() => void api.run(health.active_run_id as string).then(async run => { if (run.conversation_id) await openConversation(run.conversation_id); }).catch(reason => setError(reason.message))}>查看任务</button></div>}
       <div className="chat-scroll">
-        {!detail?.runs.length && <section className="welcome"><span className="brand-dot welcome-dot" /><h1>从数据到可核对的成果</h1><p>添加一个 CSV，用自然语言说明你想分析什么。可选资料用于解释字段、规则与方法。</p><div className="welcome-steps"><span>1 添加数据</span><span>2 描述任务</span><span>3 查看真实结果</span></div><button className="outline-button" disabled={busy} onClick={() => uploadInput.current?.click()}><Icon name="attach" />选择 CSV 或资料</button><small>支持 CSV、TXT、MD、文字型 PDF · 可拖入文件</small></section>}
+        {!detail?.runs.length && <section className="welcome"><BrandMark className="welcome-mark" /><h1>从数据到可核对的成果</h1><p>添加一个 CSV，用自然语言说明你想分析什么。可选资料用于解释字段、规则与方法。</p><div className="welcome-steps"><span>1 添加数据</span><span>2 描述任务</span><span>3 查看真实结果</span></div><button className="outline-button" disabled={busy} onClick={() => uploadInput.current?.click()}><Icon name="attach" />选择 CSV 或资料</button><small>支持 CSV、TXT、MD、文字型 PDF · 可拖入文件</small></section>}
         <div className="timeline">{detail?.runs.map(run => <RunCard key={run.id} run={run} messages={detail.messages.filter(message => message.run_id === run.id)} events={run.id === activeRun?.id ? events : run.events ?? []} liveAnswer={run.id === activeRun?.id ? liveAnswer : undefined} onError={showError} onRerun={value => { setTask(value); taskInput.current?.focus(); }} />)}</div><div ref={bottom} />
       </div>
       <div className="composer-area">
@@ -392,5 +443,6 @@ export function App({ authenticated }: { authenticated: boolean }) {
     </main>}
     {panel && page === 'chat' && <ExecutionPanel events={events.length ? events : latestRun?.events ?? []} run={latestRun} onClose={() => setPanel(false)} onError={showError} />}
     {dragging && <div className="drop-overlay"><Icon name="attach" /><strong>将文件放入当前对话</strong><span>一个 CSV，及可选 TXT / MD / PDF</span></div>}
+    {conversationAction && <ConversationDialog key={`${conversationAction.kind}-${conversationAction.conversation.id}`} action={conversationAction} busy={busy} error={conversationError} onClose={() => setConversationAction(null)} onSubmit={title => void submitConversationAction(title)} />}
   </div>;
 }

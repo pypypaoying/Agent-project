@@ -16,6 +16,7 @@ from .security import AppError, contains_secret, digest, managed_path, scrub, se
 from .store import Store, encode, now, uid
 from .worker import agent_worker
 from .providers import ProviderRegistry
+from .deadlines import RunDeadline
 
 TERMINAL = {"completed", "error", "cancelled", "interrupted"}
 ACTIVE = {"running", "awaiting_input", "cancelling"}
@@ -64,6 +65,7 @@ class Runtime:
         self.process = ctx.Process(target=target, args=(settings, app_id, csv_path, materials, context,
                                                      self.commands, self.events, self.cancel_signal), daemon=False)
         self.known_containers = {}
+        self.deadline = None
         self.closed = False
         self.process.start()
 
@@ -260,8 +262,11 @@ class TaskManager:
                                            context, self.worker_target)
                     self.runtime.selection_key = selection_key
                     self.runtime.model_config = model_config
+                    self.runtime.run_id = id
+                    self.runtime.deadline = RunDeadline(self.settings.model_timeout, self.settings.task_timeout)
                     threading.Thread(target=self._listen, args=(self.runtime,), daemon=True).start()
                 self.runtime.run_id = id
+                self.runtime.deadline = RunDeadline(self.settings.model_timeout, self.settings.task_timeout)
                 self.runtime.cancel_signal.clear()
                 self.runtime.commands.put({"op": "invoke", "run_id": id, "task": task})
             except Exception:
@@ -289,11 +294,15 @@ class TaskManager:
                 db.execute("UPDATE runs SET status='running',pending_json=NULL,updated_at=? WHERE id=?", (now(), run_id))
                 db.execute("UPDATE messages SET state='answered' WHERE run_id=? AND question_id=? AND role='assistant'", (run_id, question_id))
             self.emit(run_id, "running", {"status": "running", "resumed_question_id": question_id})
+            if getattr(self.runtime, "deadline", None):
+                self.runtime.deadline.resume()
             self.runtime.commands.put({"op": "resume", "run_id": run_id, "reply": reply})
             return self.run_view(run_id)
 
     def _listen(self, runtime):
         while not runtime.closed and not self.closed:
+            if self._deadline_exceeded(runtime):
+                break
             try:
                 item = runtime.events.get(timeout=0.5)
             except queue.Empty:
@@ -310,10 +319,14 @@ class TaskManager:
             if not run_id:
                 continue
             with self.lock:
+                if runtime.closed or self.closed:
+                    break  # An idle conversation may have been deleted while waiting for the lock.
                 run = self.store.require("runs", run_id)
                 if run["status"] in TERMINAL:
                     continue
                 kind, payload = item["kind"], scrub(item["payload"], self.secrets)
+                if getattr(runtime, "deadline", None):
+                    runtime.deadline.observe(kind, payload)
                 if kind == "runtime_identity":
                     with self.store.connect() as db:
                         db.execute("UPDATE runs SET core_session_id=?,core_task_id=? WHERE id=?", (payload["session_id"], payload["task_id"], run_id))
@@ -322,6 +335,8 @@ class TaskManager:
                         if kind == "report" and run["status"] == "cancelling":
                             continue
                         self._register_report(run_id, payload["report"], final=kind == "report")
+                        if kind == "report" and getattr(runtime, "deadline", None):
+                            runtime.deadline.pause()
                     except Exception as exc:
                         diagnostics = {"save_error": {"stage": "report_registration", "exception_type": type(exc).__name__}}
                         if isinstance(exc, AppError):
@@ -358,6 +373,27 @@ class TaskManager:
                             request = "draft:" + payload["id"]
                             db.execute("INSERT INTO messages(id,conversation_id,run_id,role,content,state,created_at,request_id) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(run_id,request_id) DO UPDATE SET content=content || excluded.content",
                                        (uid(), run["conversation_id"], run_id, "assistant", payload["text"], "provisional", now(), request))
+
+    def _deadline_exceeded(self, runtime):
+        with self.lock:
+            deadline = getattr(runtime, "deadline", None)
+            if self.active != runtime.run_id or not deadline:
+                return False
+            failure = deadline.error()
+            if not failure:
+                return False
+            run = self.store.require("runs", runtime.run_id)
+            if run["status"] != "running":
+                return False
+            runtime.cancel_signal.set()
+            runtime.stop(force=True)
+            cleaned = self.cleanup_owned(runtime.run_id, runtime)
+            self.fail(runtime.run_id, failure["code"],
+                      "模型请求超过等待时限，已停止本次运行并保留已有成果。"
+                      if failure["code"] == "model_request_timeout"
+                      else "本次任务超过运行时限，已停止并保留已有成果；可拆分任务后重新执行。",
+                      extra={"deadline": failure, "cleanup_confirmed": cleaned})
+            return True
 
     def _register_report(self, run_id, report, *, final=True):
         run = self.store.require("runs", run_id)
@@ -603,13 +639,20 @@ class TaskManager:
     def run_view(self, run_id):
         run = self.store.require("runs", run_id)
         report = json.loads(run["report_json"] or "{}")
+        active_assets = {a["id"] for a in report.get("artifacts", [])}
+        current_paths = set(report.get("artifact_paths", [])) | {
+            report[k] for k in ("record_path", "brief_path") if report.get(k)
+        }
         with self.store.connect() as db:
             artifacts = []
             for item in db.execute("SELECT * FROM artifacts WHERE run_id=?", (run_id,)):
+                if "artifacts" in report and item["core_id"] not in active_assets:
+                    continue  # Superseded partial outputs remain in execution history only.
                 meta = json.loads(item["metadata_json"])
                 files = [file_view(dict(f)) | {"name": f["artifact_name"]} for f in db.execute("SELECT f.*,af.name AS artifact_name FROM files f JOIN artifact_files af ON af.file_id=f.id WHERE af.artifact_id=?", (item["id"],))]
                 artifacts.append({k: meta[k] for k in ("kind", "label", "row_count", "columns", "value", "preview") if k in meta} | {"id": item["id"], "files": files})
-            downloads = [file_view(dict(f)) for f in db.execute("SELECT * FROM files WHERE run_id=? AND category='generated'", (run_id,))]
+            downloads = [file_view(dict(f)) for f in db.execute("SELECT * FROM files WHERE run_id=? AND category='generated'", (run_id,))
+                         if not current_paths or str(managed_path(self.store.root, f["relative_path"])) in current_paths]
             model = db.execute("SELECT selection_json FROM run_models WHERE run_id=?", (run_id,)).fetchone()
         return {k: run[k] for k in ("id", "conversation_id", "task", "status", "created_at", "updated_at", "core_session_id", "core_task_id")} | {
             "error": json.loads(run["error_json"] or "null"), "pending_input": json.loads(run["pending_json"] or "null"),

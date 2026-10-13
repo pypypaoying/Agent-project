@@ -168,6 +168,61 @@ def test_clean_missing_and_duplicates(tmp_path):
     assert metric == {"原始行数": 4, "处理后行数": 3, "删除重复": 1, "填充缺失": 1}
 
 
+def test_partial_charts_full_script_repair_and_active_only_replay(tmp_path):
+    """Scripted model responses, genuine containers/plots and source-bound replay."""
+    import json
+    from langchain_core.messages import AIMessage, ToolMessage
+    from langchain_core.outputs import ChatGeneration, ChatResult
+
+    deliveries = [{"id": "table", "kind": "table", "description": "分组完整表"},
+                  {"id": "chart1", "kind": "figure", "description": "趋势图"},
+                  {"id": "chart2", "kind": "figure", "description": "分布图"}]
+    script = """from helper import load_dataset,emit_table,emit_figure
+import matplotlib.pyplot as plt
+df=load_dataset()
+df['value']=df['c3'].astype(float)
+result=df.groupby('c2',sort=True)['value'].sum().reset_index()
+for did,title in [('chart1','完整分组结果'),('chart2','真实统计值')]:
+    fig,ax=plt.subplots()
+    ax.plot(result['c2'],result['value'],marker='o')
+    ax.set_title(title)
+    ax.set_xlabel('日期');ax.set_ylabel('数量')
+    fig.tight_layout()
+    emit_figure(fig,result,did,title)
+    plt.close(fig)
+"""
+
+    class RepairModel(OfflineAnalysisModel):
+        def _generate(self, messages, **kwargs):
+            outputs = [json.loads(m.content) for m in messages if isinstance(m, ToolMessage) and m.name == 'execute_python']
+            if not outputs or outputs[-1]['status'] == 'error':
+                count = len(outputs)
+                code = script + ("emit_table(result,'table','分组完整表')\n" if count else '')
+                message = call('execute_python', f'code-{count}', {'code': code})
+            else:
+                message = AIMessage(content=json.dumps({'status': 'completed', 'artifact_ids': outputs[-1]['artifact_ids'], 'summary': '已核对三项成果'}))
+            return ChatResult(generations=[ChatGeneration(message=message)])
+
+    main = ScriptedModel(responses=[call(), call('set_task_plan', 'plan', {'deliverables': deliveries}),
+                                   call('delegate_analysis', 'delegate', {'instruction': '计算分组结果并绘制两图', 'deliverable_ids': [d['id'] for d in deliveries]}),
+                                   answer('calculation', '已经真实执行并修正，结果与图表已导出。')])
+    source = FIXTURES / 'dates.csv'
+    before = hashlib.sha256(source.read_bytes()).hexdigest()
+    session = create_session(source, main, analysis_model=RepairModel())
+    report = session.invoke('计算分组结果并绘制两图')
+    assert report['status'] == 'completed', report.get('error')
+    assert len(report['code_executions']) == 2
+    assert all(e['exit_code'] == 0 and e['container_removed'] for e in report['code_executions'])
+    assert len(session.artifact_assets) == 3
+    assert {a['execution_id'] for a in report['artifacts']} == {report['code_executions'][1]['id']}
+    saved = session.save(tmp_path / 'exports')
+    replayed = replay_analysis(saved['record_path'], source)
+    assert replayed['status'] == 'completed'
+    assert len(replayed['code_executions']) == 1 and len(replayed['artifacts']) == 3
+    assert Path(saved['result_csv_paths'][0]).read_bytes() == Path(replayed['result_csv_paths'][0]).read_bytes()
+    assert hashlib.sha256(source.read_bytes()).hexdigest() == before
+
+
 def execute_script(code, tmp_path, *, timeout=60):
     path = tmp_path / "data.csv"
     path.write_text("id,value,value\n001,NA,NULL\n002,0, \n", encoding="utf-8")

@@ -50,7 +50,7 @@ def test_initial_migration_is_persistent_and_uses_wal_foreign_keys(store):
     assert reopened.app_id == store.app_id
     assert reopened.require("conversations", conversation["id"])["title"] == "实际分析"
     with reopened.connect() as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 3
         assert db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert db.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert db.execute("PRAGMA foreign_key_check").fetchall() == []
@@ -80,7 +80,7 @@ def test_v1_upgrade_preserves_history_and_adds_model_bindings(tmp_path):
     assert upgraded.app_id == app_id
     assert upgraded.require("conversations", conversation_id)["title"] == "旧对话"
     with upgraded.connect() as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 3
         assert db.execute("SELECT count(*) FROM conversation_models").fetchone()[0] == 0
         assert db.execute("SELECT count(*) FROM run_models").fetchone()[0] == 0
 

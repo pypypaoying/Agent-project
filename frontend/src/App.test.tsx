@@ -7,7 +7,7 @@ import type { ConversationDetail } from './types';
 
 vi.mock('./api', () => ({
   ApiError: class extends Error { constructor(public status: number, message: string) { super(message); } },
-  api: { health: vi.fn(), shutdown: vi.fn(), providers: vi.fn(), saveProvider: vi.fn(), defaultProvider: vi.fn(), refreshProviderModels: vi.fn(), testProvider: vi.fn(), conversations: vi.fn(), createConversation: vi.fn(), conversation: vi.fn(), upload: vi.fn(), removeFile: vi.fn(), start: vi.fn(), run: vi.fn(), reply: vi.fn(), cancel: vi.fn(), preview: vi.fn(), blob: vi.fn() },
+  api: { health: vi.fn(), shutdown: vi.fn(), providers: vi.fn(), saveProvider: vi.fn(), defaultProvider: vi.fn(), refreshProviderModels: vi.fn(), testProvider: vi.fn(), conversations: vi.fn(), createConversation: vi.fn(), updateConversation: vi.fn(), deleteConversation: vi.fn(), conversation: vi.fn(), upload: vi.fn(), removeFile: vi.fn(), start: vi.fn(), run: vi.fn(), reply: vi.fn(), cancel: vi.fn(), preview: vi.fn(), blob: vi.fn() },
   streamEvents: vi.fn(), downloadFile: vi.fn(),
 }));
 
@@ -100,7 +100,31 @@ describe('real-data chat interface', () => {
   it('does not execute HTML or load model-provided images', async () => {
     await open({ ...withCsv(), runs: [{ id: 'r', status: 'completed', final_answer: '<script>alert(1)</script>\n![remote](https://external.invalid/tracker.png)' }] });
     expect(document.querySelector('script')).toBeNull();
-    expect(document.querySelector('img')).toBeNull();
+    expect(document.querySelector('.prose img')).toBeNull();
+    expect(document.querySelector('img[src^="https://external.invalid"]')).toBeNull();
+  });
+
+  it('renders registered report Markdown as readable sections while preserving ordinary zero metrics', async () => {
+    await open({ ...withCsv(), runs: [{ id: 'r', status: 'completed', artifacts: [{ id: 'actual-report', kind: 'metric', label: '分析报告', files: [], value: { report_markdown: '# 模型评估\n\n## 方法\n\n按时间划分数据，并核对预测误差。\n\n## 结论\n\n**下一步**：补充更多独立样本。', count: 0 } }] }] });
+    const report = screen.getByRole('region', { name: '分析报告' });
+    expect(within(report).getByRole('heading', { name: '模型评估', level: 1 })).toBeVisible();
+    expect(within(report).getByRole('heading', { name: '方法', level: 2 })).toBeVisible();
+    expect(within(report).getByRole('heading', { name: '结论', level: 2 })).toBeVisible();
+    expect(within(report).getByText('按时间划分数据，并核对预测误差。')).toBeVisible();
+    expect(within(report).getByText('count')).toBeVisible();
+    expect(within(report).getByText('0', { exact: true })).toBeVisible();
+    expect(within(report).queryByText('report_markdown')).not.toBeInTheDocument();
+  });
+
+  it('does not execute narrative HTML or load images from an untrusted report', async () => {
+    const narrative = '# 验收报告\n\n<script>window.reportInjected = true</script>\n\n<img src="https://external.invalid/html-tracker.png" onerror="window.reportInjected = true">\n\n![外链图片](https://external.invalid/markdown-tracker.png)\n\n[危险链接](javascript:alert(1))\n\n普通报告内容。';
+    await open({ ...withCsv(), runs: [{ id: 'r', status: 'completed', artifacts: [{ id: 'actual-report', kind: 'metric', label: '安全报告', files: [], value: { report_markdown: narrative } }] }] });
+    const report = screen.getByRole('region', { name: '安全报告' });
+    expect(within(report).getByRole('heading', { name: '验收报告' })).toBeVisible();
+    expect(within(report).getByText('普通报告内容。')).toBeVisible();
+    expect(report.querySelector('script,img,iframe,[onerror],a[href^="javascript:"]')).toBeNull();
+    expect(document.querySelector('img[src^="https://external.invalid"]')).toBeNull();
+    expect(api.blob).not.toHaveBeenCalled();
   });
 
   it('reads paged table preview from registered artifact ID', async () => {
@@ -262,7 +286,7 @@ describe('real-data chat interface', () => {
     await userEvent.click(screen.getByRole('button', { name: '退出应用' }));
     expect(await screen.findByRole('heading', { name: '应用已退出' })).toBeVisible();
     expect(api.shutdown).toHaveBeenCalledTimes(1);
-    expect(screen.getByText(/重新双击 LabWeaver 启动器/)).toBeVisible();
+    expect(screen.getByText(/重新双击 Analyvia 启动器/)).toBeVisible();
     expect(screen.queryByRole('textbox', { name: '任务说明' })).not.toBeInTheDocument();
   });
 
@@ -287,5 +311,105 @@ describe('real-data chat interface', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('还有活动任务');
     expect(screen.queryByRole('heading', { name: '应用已退出' })).not.toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: '任务说明' })).toBeVisible();
+  });
+
+  it('renames a saved conversation through the API and updates the current header', async () => {
+    await open();
+    vi.mocked(api.updateConversation).mockResolvedValue({ ...withCsv().conversation, title: '部门满意度' });
+    vi.mocked(api.conversations).mockResolvedValue({ conversations: [{ id: 'c', title: '部门满意度' }] });
+    await userEvent.click(screen.getByRole('button', { name: '对话操作：问卷分析' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: '重命名' }));
+    const dialog = screen.getByRole('dialog', { name: '重命名对话' });
+    fireEvent.change(within(dialog).getByRole('textbox', { name: '对话名称' }), { target: { value: '  部门满意度  ' } });
+    await userEvent.click(within(dialog).getByRole('button', { name: '保存名称' }));
+    await waitFor(() => expect(api.updateConversation).toHaveBeenCalledWith('c', { title: '部门满意度' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(screen.getByRole('button', { name: '部门满意度' })).toBeVisible();
+    expect(document.querySelector('.topbar strong')).toHaveTextContent('部门满意度');
+    expect(screen.getByText('调查.csv')).toBeVisible();
+  });
+
+  it('persists pinning and unpinning without changing or resubmitting the active chat', async () => {
+    await open();
+    vi.mocked(api.updateConversation).mockResolvedValueOnce({ ...empty().conversation, pinned: true }).mockResolvedValueOnce({ ...empty().conversation, pinned: false });
+    vi.mocked(api.conversations).mockResolvedValueOnce({ conversations: [{ id: 'c', title: '问卷分析', pinned: true }] }).mockResolvedValue({ conversations: [{ id: 'c', title: '问卷分析', pinned: false }] });
+    await userEvent.click(screen.getByRole('button', { name: '对话操作：问卷分析' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: '置顶' }));
+    await waitFor(() => expect(api.updateConversation).toHaveBeenCalledWith('c', { pinned: true }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '对话操作：问卷分析' })).toBeEnabled());
+    await userEvent.click(screen.getByRole('button', { name: '对话操作：问卷分析' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: '取消置顶' }));
+    await waitFor(() => expect(api.updateConversation).toHaveBeenLastCalledWith('c', { pinned: false }));
+    expect(api.start).not.toHaveBeenCalled(); expect(api.createConversation).not.toHaveBeenCalled();
+  });
+
+  it('requires an explicit irreversible deletion confirmation and retains the conversation when cancelled', async () => {
+    await open();
+    await userEvent.click(screen.getByRole('button', { name: '对话操作：问卷分析' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: '永久删除' }));
+    const dialog = screen.getByRole('dialog', { name: '永久删除对话' });
+    expect(dialog).toHaveTextContent('消息、应用内附件副本和全部分析成果'); expect(dialog).toHaveTextContent('原本的本地文件会保留');
+    await userEvent.click(within(dialog).getByRole('button', { name: '取消' }));
+    expect(api.deleteConversation).not.toHaveBeenCalled(); expect(screen.getByText('调查.csv')).toBeVisible();
+  });
+
+  it('deletes the selected conversation and reuses an existing empty draft', async () => {
+    const records = [{ id: 'c', title: '问卷分析' }, { id: 'draft', title: '空草稿' }];
+    vi.mocked(api.conversations).mockResolvedValue({ conversations: records });
+    vi.mocked(api.conversation).mockImplementation(async id => id === 'c' ? withCsv() : { ...empty(), conversation: records[1] });
+    vi.mocked(api.deleteConversation).mockImplementation(async id => { vi.mocked(api.conversations).mockResolvedValue({ conversations: [records[1]] }); return { deleted: true, conversation_id: id }; });
+    render(<App authenticated />);
+    await userEvent.click(await screen.findByRole('button', { name: '问卷分析' }));
+    await screen.findByText('调查.csv');
+    await userEvent.click(screen.getByRole('button', { name: '对话操作：问卷分析' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: '永久删除' }));
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '永久删除' }));
+    await waitFor(() => expect(api.deleteConversation).toHaveBeenCalledWith('c'));
+    await waitFor(() => expect(document.querySelector('.conversation-item.selected')).toHaveAttribute('data-conversation-id', 'draft'));
+    expect(screen.queryByText('调查.csv')).not.toBeInTheDocument();
+    expect(api.createConversation).not.toHaveBeenCalled();
+  });
+
+  it('protects active conversations in the menu while allowing rename and pin operations', async () => {
+    await open({ ...withCsv(), runs: [{ id: 'r', status: 'awaiting_input' }] });
+    await userEvent.click(screen.getByRole('button', { name: '对话操作：问卷分析' }));
+    expect(screen.getByRole('menuitem', { name: '永久删除' })).toBeDisabled();
+    expect(screen.getByRole('menuitem', { name: '重命名' })).toBeEnabled();
+    expect(screen.getByRole('menuitem', { name: '置顶' })).toBeEnabled();
+    expect(api.deleteConversation).not.toHaveBeenCalled();
+  });
+
+  it('preserves the conversation when server activity races a deletion', async () => {
+    await open(); vi.mocked(api.deleteConversation).mockRejectedValue(new ApiError(409, 'active task'));
+    await userEvent.click(screen.getByRole('button', { name: '对话操作：问卷分析' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: '永久删除' }));
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '永久删除' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('有活动任务');
+    expect(screen.getByText('调查.csv')).toBeVisible();
+    expect(screen.getByRole('dialog')).toBeVisible();
+  });
+
+  it('returns to a new-chat view after deleting the last conversation without creating surplus drafts', async () => {
+    await open();
+    vi.mocked(api.deleteConversation).mockImplementation(async id => { vi.mocked(api.conversations).mockResolvedValue({ conversations: [] }); return { deleted: true, conversation_id: id }; });
+    await userEvent.click(screen.getByRole('button', { name: '对话操作：问卷分析' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: '永久删除' }));
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '永久删除' }));
+    expect(await screen.findByText('还没有对话')).toBeVisible();
+    expect(screen.queryByText('调查.csv')).not.toBeInTheDocument();
+    expect(api.createConversation).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: '发送任务' })).toBeDisabled();
+  });
+
+  it('never opens pending deletion entries while reusing a safe empty draft', async () => {
+    const records = [{ id: 'c', title: '问卷分析' }, { id: 'pending', title: '未完成清理', deletion_pending: true }, { id: 'draft', title: '空草稿' }];
+    vi.mocked(api.conversations).mockResolvedValue({ conversations: records });
+    vi.mocked(api.conversation).mockImplementation(async id => id === 'c' ? withCsv() : { ...empty(), conversation: records.find(item => item.id === id)! });
+    render(<App authenticated />);
+    await userEvent.click(await screen.findByRole('button', { name: '问卷分析' }));
+    await screen.findByText('调查.csv');
+    await userEvent.click(screen.getByRole('button', { name: '新建对话' }));
+    await waitFor(() => expect(document.querySelector('.conversation-item.selected')).toHaveAttribute('data-conversation-id', 'draft'));
+    expect(api.conversation).not.toHaveBeenCalledWith('pending');
   });
 });

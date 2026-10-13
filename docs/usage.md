@@ -12,7 +12,7 @@ npm run build
 cd ..
 ```
 
-双击 `start-labweaver.cmd`。也可从仓库根目录执行：
+双击 `start-analyvia.cmd`。也可从仓库根目录执行：
 
 ```powershell
 uv run --frozen --no-sync --extra web labweaver serve --open
@@ -31,7 +31,13 @@ uv run --frozen --no-sync --extra web labweaver serve --open
 
 2026-10-12 更新增大了常用文字和图标。已运行的服务需重启并刷新页面才能使用更新后的界面和路径修复；过去失败的任务不会自动重跑，可在历史中按原任务重新执行。
 
-离线公开演示可使用 `labweaver serve --offline --open`，分析仍需要真实 Docker；确定性模型只支持有限示例。搜索、重命名/删除管理、工作空间、独立知识库与桌面安装包留待 P2–P4。详细架构见 [Desktop](desktop.md)。
+在对话列表的 **⋯** 菜单或右键菜单中重命名、置顶/取消置顶、永久删除。置顶保存在 SQLite，重启后仍在顶部。删除必须明确确认，会移除该对话的消息、导入副本及全部独占运行目录（包含部分失败代码与日志），不改用户原文件。运行中/等待回复/停止中的对话须先结束任务。清理失败显示待删除状态，再次确认即可继续；它不能继续分析，也不能假报删除成功。
+
+离线公开演示可使用 `labweaver serve --offline --open`，分析仍需要真实 Docker；确定性模型只支持有限示例。搜索、工作空间、独立知识库与桌面安装包留待 P2–P4。详细架构见 [Desktop](desktop.md)。
+
+复杂任务默认代码输出预算 12288 tokens。`model_output_truncated` 表示超过模型输出预算；程序会在原预算内做一次格式修正，不执行半截工具参数。`missing_deliverables` 表示真实执行未交齐成果；只打印结果不算完成，代码 Agent 会收到缺失项并有限修正。聊天会展示主/代码 Agent 的真实请求开始、结束与耗时。
+
+浏览器服务的 `WebSettings.model_timeout=180`、`task_timeout=900` 分别约束单模型等待与累计运行时间；等待人工回复暂停累计计时，恢复不重置已消耗时间。这是应用服务的进程监督，区别于 HTTP 读超时和 Docker 每次 60 秒的执行时限。超时保留合法成果并核对所属容器清理，不允许永久显示运行中。高级 Python 集成可通过 `WebSettings` 调整；GUI 尚无预算编辑页面。
 
 ### 重复启动与退出
 
@@ -61,7 +67,7 @@ Windows 新 Key 加密保存在本机应用数据目录，只能由当前 Window
 
 ## Windows / VS Code
 
-首次安装 Docker Desktop 与 WSL2、启用 Virtual Machine Platform/硬件虚拟化，按系统要求重启。确认 Docker Desktop Linux 引擎已运行，再在 VS Code 的 Terminal → Run Task 选择 **LabWeaver: Build analysis sandbox**。安装宿主依赖 `uv sync --locked` 后选择项目 `.venv` 解释器。
+首次安装 Docker Desktop 与 WSL2、启用 Virtual Machine Platform/硬件虚拟化，按系统要求重启。确认 Docker Desktop Linux 引擎已运行，再在 VS Code 的 Terminal → Run Task 选择 **Analyvia: Build analysis sandbox**。安装宿主依赖 `uv sync --locked` 后选择项目 `.venv` 解释器。
 
 模型配置使用忽略的 `.env` 或 `labweaver.local.toml` 引用已有配置，例如：
 
@@ -69,7 +75,7 @@ Windows 新 Key 加密保存在本机应用数据目录，只能由当前 Window
 [intake]
 env_file = "D:/private/existing.env"
 mode = "live"
-analysis_max_tokens = 4096
+analysis_max_tokens = 12288
 execution_image = "labweaver-python:0.2.0"
 execution_timeout = 60
 ```

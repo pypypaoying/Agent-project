@@ -68,4 +68,15 @@ describe('protected local API', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail: 'raw secret token details' }), { status: 401 })));
     await expect(api.providers()).rejects.toThrow('访问令牌已失效，请用启动器重新打开应用');
   });
+
+  it('updates conversation metadata and explicitly confirms deletion without arbitrary file paths', async () => {
+    const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ id: 'c', title: '新名称', pinned: true }))).mockResolvedValueOnce(new Response(JSON.stringify({ deleted: true, conversation_id: 'c' }))); vi.stubGlobal('fetch', fetch);
+    await api.updateConversation('c', { title: '新名称', pinned: true });
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/conversations/c');
+    expect(fetch.mock.calls[0][1].method).toBe('PATCH');
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ title: '新名称', pinned: true });
+    await api.deleteConversation('c');
+    expect(fetch.mock.calls[1][1].method).toBe('DELETE');
+    expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ confirm: true });
+  });
 });

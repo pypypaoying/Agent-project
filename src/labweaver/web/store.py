@@ -36,15 +36,11 @@ class Store:
         with self.connect() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             version = conn.execute("PRAGMA user_version").fetchone()[0]
-            if version == 0:
-                script = (Path(__file__).parent / "migrations/001.sql").read_text(encoding="utf-8")
-                conn.executescript("BEGIN IMMEDIATE;\n" + script + "\nCOMMIT;")
-                version = 1
-            if version == 1:
-                script = (Path(__file__).parent / "migrations/002.sql").read_text(encoding="utf-8")
-                conn.executescript("BEGIN IMMEDIATE;\n" + script + "\nCOMMIT;")
-            elif version != 2:
+            if version not in {0, 1, 2, 3}:
                 raise AppError("schema_version", "数据库版本不兼容，请使用匹配的应用版本。", 503)
+            for next_version in range(version + 1, 4):
+                script = (Path(__file__).parent / f"migrations/{next_version:03d}.sql").read_text(encoding="utf-8")
+                conn.executescript("BEGIN IMMEDIATE;\n" + script + "\nCOMMIT;")
             conn.execute("INSERT OR IGNORE INTO app_meta VALUES ('app_id',?)", (uid(),))
             self.app_id = conn.execute("SELECT value FROM app_meta WHERE key='app_id'").fetchone()[0]
 
@@ -71,17 +67,25 @@ class Store:
         row = conn.execute(f"SELECT * FROM {table} WHERE id=?", (id,)).fetchone()
         if row is None:
             raise AppError("not_found", "记录不存在。", 404)
-        return dict(row)
+        item = dict(row)
+        if table == "conversations":
+            if conn.execute("SELECT 1 FROM conversation_deletions WHERE conversation_id=?", (id,)).fetchone():
+                raise AppError("conversation_deletion_pending", "该对话的删除尚未完成，请再次确认永久删除。", 409)
+            item["pinned"] = bool(item["pinned"])
+        return item
 
     def new_conversation(self, title="新对话"):
-        item = dict(id=uid(), title=title.strip()[:120] or "新对话", created_at=now(), updated_at=now(), frozen=0)
+        item = dict(id=uid(), title=title.strip()[:120] or "新对话", created_at=now(), updated_at=now(), frozen=0, pinned=False)
         with self.connect() as db:
-            db.execute("INSERT INTO conversations VALUES (:id,:title,:created_at,:updated_at,:frozen)", item)
+            db.execute("INSERT INTO conversations(id,title,created_at,updated_at,frozen,pinned) VALUES (:id,:title,:created_at,:updated_at,:frozen,:pinned)", item)
         return item
 
     def conversations(self):
         with self.connect() as db:
-            return [dict(r) for r in db.execute("SELECT * FROM conversations ORDER BY updated_at DESC")]
+            rows = db.execute("SELECT c.*, EXISTS(SELECT 1 FROM conversation_deletions d WHERE d.conversation_id=c.id) AS deletion_pending, "
+                              "(SELECT r.id FROM runs r WHERE r.conversation_id=c.id AND r.status IN ('running','awaiting_input','cancelling') ORDER BY r.created_at DESC LIMIT 1) AS active_run_id "
+                              "FROM conversations c ORDER BY c.pinned DESC,c.updated_at DESC,c.id")
+            return [dict(row) | {"pinned": bool(row["pinned"]), "deletion_pending": bool(row["deletion_pending"])} for row in rows]
 
     def append_event(self, run_id, kind, payload, *, conn=None):
         if conn is not None:

@@ -88,6 +88,9 @@ def stream_execution(graph, command, config, on_event):
                 "execution_end",
                 "retrieval_result",
                 "container_lifecycle",
+                "model_start",
+                "model_end",
+                "model_retry",
             }:
                 on_event(data)
         elif event["type"] == "values":
@@ -201,6 +204,10 @@ class ConsoleStream:
             )
         elif kind == "execution_end":
             print(f"[代码结果] {event['status']}", flush=True)
+        elif kind == "model_start":
+            print("[生成] " + ("代码分析 Agent" if event["role"] == "analysis" else "主 Agent") + f"，第 {event['call']} 次请求", flush=True)
+        elif kind == "model_retry":
+            print("[修正] 模型响应不完整，正在进行一次格式修正。", flush=True)
         elif kind == "tool_start":
             print(f"[执行] {event['name']}", flush=True)
         elif kind == "tool_end":

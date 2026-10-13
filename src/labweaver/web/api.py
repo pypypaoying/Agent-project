@@ -17,6 +17,7 @@ from starlette.background import BackgroundTask
 
 from .files import preview_artifact, read_registered
 from .manager import ACTIVE, TaskManager
+from .conversations import ConversationService
 from .security import AppError, contains_secret
 
 
@@ -26,6 +27,15 @@ class Payload(BaseModel):
 
 class NewConversation(Payload):
     title: StrictStr = Field(default="新对话", max_length=120)
+
+
+class ConversationPatch(Payload):
+    title: StrictStr | None = Field(default=None, min_length=1, max_length=120)
+    pinned: StrictBool | None = None
+
+
+class ConversationDelete(Payload):
+    confirm: StrictBool
 
 
 class NewRun(Payload):
@@ -62,6 +72,7 @@ class Reply(Payload):
 
 def create_app(settings, *, manager=None, instance_id=None, port=8765, shutdown=None):
     service = manager or TaskManager(settings)
+    conversation_service = ConversationService(service)
     from .instances import identity_proof, project_id
     identity = {'version': 1, 'project': project_id(settings.project_dir), 'port': port,
                 'instance_id': instance_id or uuid.uuid4().hex, 'mode': settings.mode}
@@ -72,7 +83,7 @@ def create_app(settings, *, manager=None, instance_id=None, port=8765, shutdown=
         yield
         await asyncio.to_thread(service.close)
 
-    app = FastAPI(title="LabWeaver Desktop", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+    app = FastAPI(title="Analyvia Desktop", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.manager = service
     app.state.shutdown_requested = False
 
@@ -97,7 +108,7 @@ def create_app(settings, *, manager=None, instance_id=None, port=8765, shutdown=
                 return JSONResponse({"error": {"code": "query_token_forbidden", "message": "令牌不能使用查询参数传递。"}}, status_code=400)
             if app.state.shutdown_requested and request.method in {'POST', 'PUT', 'PATCH', 'DELETE'} and request.url.path != '/api/v1/application/shutdown':
                 return JSONResponse({'error': {'code': 'application_stopping', 'message': '应用正在退出，请重新启动后操作。'}}, status_code=503)
-            if request.method in {"POST", "PUT", "PATCH"}:
+            if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
                 # Bound even chunked multipart requests before Starlette spools them to disk.
                 parts, size = [], 0
                 async for part in request.stream():
@@ -214,6 +225,14 @@ def create_app(settings, *, manager=None, instance_id=None, port=8765, shutdown=
     @app.get("/api/v1/conversations/{conversation_id}")
     def conversation(conversation_id: str):
         return service.conversation_view(conversation_id)
+
+    @app.patch("/api/v1/conversations/{conversation_id}")
+    def update_conversation(conversation_id: str, body: ConversationPatch):
+        return conversation_service.patch(conversation_id, body.model_dump(exclude_none=True))
+
+    @app.delete("/api/v1/conversations/{conversation_id}")
+    def delete_conversation(conversation_id: str, body: ConversationDelete):
+        return conversation_service.delete(conversation_id, confirm=body.confirm)
 
     @app.post("/api/v1/conversations/{conversation_id}/files", status_code=201)
     async def upload(conversation_id: str, file: UploadFile = File(...)):

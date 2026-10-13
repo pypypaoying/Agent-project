@@ -1,6 +1,7 @@
 """Exclusive export with rollback, host hashes and source-bound artifacts."""
 
 import copy
+import html
 import hashlib
 import json
 from pathlib import Path
@@ -14,11 +15,21 @@ from labweaver.runtime.artifacts import (
 )
 
 
+def _report_markdown(text):
+    """Readable explanatory text without active HTML or remote images."""
+    text = re.sub(r"!\[([^\]\n]*)\]\([^\n]*?\)", r"\1", text)
+    def link(match):
+        label, target = match.groups()
+        return match.group(0) if target.strip().startswith(("https://", "http://")) else label
+    text = re.sub(r"\[([^\]\n]*)\]\(([^\)\n]*)\)", link, text)
+    return html.escape(text, quote=False)
+
+
 def _markdown_brief(report):
     from labweaver.agent import _table_markdown
 
     lines = [
-        "# LabWeaver 任务报告",
+        "# Analyvia 任务报告",
         "",
         f"状态：{report['status']}",
         "",
@@ -52,19 +63,18 @@ def _markdown_brief(report):
         if artifact["kind"] == "figure" and paths.get("figure.png"):
             lines.extend([f"![分析图表]({Path(paths['figure.png']).name})", ""])
         elif artifact["kind"] == "metric":
-            lines.extend(
-                [
-                    "```json",
-                    json.dumps(
-                        artifact.get("value"),
-                        ensure_ascii=False,
-                        allow_nan=False,
-                        indent=2,
-                    ),
-                    "```",
-                    "",
-                ]
-            )
+            value = artifact.get("value")
+            narrative = value.get("report_markdown") if isinstance(value, dict) else None
+            show_json = True
+            if isinstance(narrative, str) and len(narrative.encode()) <= 64 * 1024:
+                lines.extend([_report_markdown(narrative), ""])
+                value = {k: v for k, v in value.items() if k != "report_markdown"}
+                show_json = bool(value)
+            if show_json:
+                rendered = json.dumps(value, ensure_ascii=False, allow_nan=False, indent=2)
+                if len(rendered.encode()) > 64 * 1024:
+                    rendered = "内容超过报告预览预算，请查看完整指标 JSON 文件。"
+                lines.extend(["```json", rendered, "```", ""])
         elif artifact.get("preview"):
             lines.extend(
                 [

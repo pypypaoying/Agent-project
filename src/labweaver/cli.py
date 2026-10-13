@@ -17,8 +17,8 @@ def _delimiter(value: str) -> str:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="LabWeaver read-only CSV task agent")
-    parser.add_argument("--version", action="version", version="LabWeaver 0.2.0")
+    parser = argparse.ArgumentParser(description="Analyvia read-only CSV task agent")
+    parser.add_argument("--version", action="version", version="Analyvia 0.2.0")
     commands = parser.add_subparsers(dest="command", required=True)
     web = commands.add_parser("serve", help="Open the local Desktop browser application")
     web.add_argument("--open", action="store_true")

@@ -3,8 +3,9 @@
 import copy
 import json
 import threading
+import time
 from langchain.agents.middleware import AgentMiddleware
-from langchain_core.messages import SystemMessage, ToolMessage
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from labweaver.runtime.evidence import _message_content, _trace_messages
 
 
@@ -25,6 +26,8 @@ class ExecutionHarness(AgentMiddleware):
         model_counter=None,
         reject_invalid=True,
         cancellation_event=None,
+        progress=None,
+        role="main",
     ):
         self.limits = limits
         self.available = available or (lambda: set(limits))
@@ -33,6 +36,8 @@ class ExecutionHarness(AgentMiddleware):
         self.model_counter = model_counter
         self.reject_invalid = reject_invalid
         self.cancellation_event = cancellation_event
+        self.progress = progress or (lambda event: None)
+        self.role = role
         self._lock = threading.RLock()
         self._active = threading.local()
         self.new_task()
@@ -48,8 +53,35 @@ class ExecutionHarness(AgentMiddleware):
         self.execution_ledger, self.events, self.tool_exposure = [], [], []
         self._admitted, self._cached, self._advertised = {}, {}, set()
         self.failure = None
+        self.model_diagnostics = []
 
     def wrap_model_call(self, request, handler):
+        # A truncated JSON/tool response is not executable evidence. One bounded
+        # retry may repair the format; every request consumes the same budget.
+        for attempt in range(2):
+            response = self._model_call(request, handler)
+            problem = next((
+                "model_output_truncated"
+                if (getattr(message, "response_metadata", {}) or {}).get("finish_reason") == "length"
+                else "invalid_tool_arguments"
+                for message in response.result
+                if (getattr(message, "response_metadata", {}) or {}).get("finish_reason") == "length"
+                or getattr(message, "invalid_tool_calls", None)
+            ), None)
+            if not problem:
+                self.events.extend(_trace_messages(response.result))
+                return response
+            self.model_diagnostics.append({"call": self.model_calls, "code": problem})
+            if attempt:
+                raise HarnessRejected(problem)
+            self.progress({"type": "model_retry", "role": self.role,
+                           "call": self.model_calls, "error_code": problem})
+            request = request.override(messages=[*request.messages, HumanMessage(
+                content="宿主格式反馈：上一响应超过输出预算或工具参数不是完整 JSON，未执行任何工具。"
+                "请紧凑地重写完整响应；代码需保留所有授权交付项及 emit_* 调用，不能只打印结果。"
+            )])
+
+    def _model_call(self, request, handler):
         with self._lock:
             self.check_cancelled()
             if self.failure:
@@ -69,19 +101,33 @@ class ExecutionHarness(AgentMiddleware):
         ]
         if len(allowed) != len(names):
             raise HarnessRejected("invalid_tool_configuration")
-        response = handler(
-            request.override(
-                tools=allowed,
-                system_message=SystemMessage(
-                    content=_message_content(request.system_message)
-                    + "\n当前开放工具："
-                    + ", ".join(sorted(names))
-                    + self.context()
-                ),
+        start = time.monotonic()
+        call = self.model_calls
+        self.progress({"type": "model_start", "role": self.role, "call": call})
+        try:
+            response = handler(
+                request.override(
+                    tools=allowed,
+                    system_message=SystemMessage(
+                        content=_message_content(request.system_message)
+                        + "\n当前开放工具："
+                        + ", ".join(sorted(names))
+                        + self.context()
+                    ),
+                )
             )
-        )
+        except BaseException:
+            self.progress({"type": "model_end", "role": self.role, "call": call,
+                           "status": "error", "elapsed_seconds": round(time.monotonic() - start, 3)})
+            raise
+        reasons = [(getattr(m, "response_metadata", {}) or {}).get("finish_reason") for m in response.result]
+        # Only normalized metadata leaves the model boundary, never raw content,
+        # SDK errors, tool arguments, reasoning, or authentication information.
+        reason = next((v for v in reasons if v in {"length", "stop", "tool_calls", "content_filter"}), None)
+        self.progress({"type": "model_end", "role": self.role, "call": call,
+                       "status": "completed", "finish_reason": reason,
+                       "elapsed_seconds": round(time.monotonic() - start, 3)})
         self.check_cancelled()
-        self.events.extend(_trace_messages(response.result))
         return response
 
     def _reject(self, call, code):

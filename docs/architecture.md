@@ -30,6 +30,8 @@ flowchart TD
 |---|---|
 | `app.py`、`cli.py` | VS Code 对话入口与保留的 CLI；收集输入、显示流式进度和结果；CLI 提供本地应用启动 |
 | `web/`、`frontend/` | 本地应用服务、受控工作进程、基础历史与文件关联；React 真实聊天界面 |
+| `web/conversations.py`、`web/migrations/003.sql` | 重命名、持久化置顶、独占文件永久清理与可重试删除日志 |
+| `web/deadlines.py` | 基于单调时钟的模型/任务时限，人工等待暂停，事件不会重置期限 |
 | `config.py`、`run_config.py` | 模型凭证与运行设置分开读取；不把凭证写入记录 |
 | `agent.py` | `AgentSession`、`create_session()`、`run_intake()`；主图、计划、委派、RAG、澄清与完成校验 |
 | `analysis.py` | `AnalysisRunner.delegate()`；独立 `create_agent` 上下文，完整脚本执行与有限修正 |
@@ -58,6 +60,10 @@ flowchart TD
 容器使用不可变镜像 ID、非 root、无网络、只读根、cap-drop、no-new-privileges、64 PID、2 CPU/1 GiB、128 MiB tmpfs。只挂载当前任务暂存的快照与脚本，不挂载项目、用户目录、源 CSV 或 Docker socket。按 Docker CLI 优先级检查 context/host，只接受本地 Unix/named-pipe endpoint；执行与清理固定使用已校验端点。显式清空代理变量，防止 Docker 客户端配置自动传入代理凭证。
 
 每任务主/代码模型各最多 12 次，委派两次，每委派执行三次，检索三次、澄清三次。相同调用 ID 相同参数只执行一次；重用 ID 改参数拒绝；恢复不中途重置预算。后续新任务预算重置，上下文保留，范围变化需重新执行。
+
+主 Agent 将原始任务与确认回复转交给代码 Agent，委派摘要不替代任务约束。JSON/CSV/图表类型分别对应 metric/table/figure。截断响应或不完整工具参数在执行前拦截，至多一次格式修正并占用原调用预算；诊断只记录安全元数据。真实代码退出成功但缺少 emit 产物时，工具明确返回缺失交付项，允许完整脚本修正。
+
+修正的合法产物原子替换本任务、本授权委派的暂存成果；失败保留原部分成果。后续授权委派可接管同范围未完成成果，但不能抵扣其他交付项、已完成委派或历史任务的配额。最终界面与重放仅使用当前成果，所有真实代码尝试继续保留；因此两张暂存图不会阻止完整修正再次绘图。Markdown 报告可展开 report_markdown 说明内容，禁用其主动 HTML/远程图片，超大指标仅显示有界预览，完整 JSON 仍导出。
 
 主 Agent 登记计划后未委派就结束，或取得全部成果后最终回答格式不合法时，宿主最多提供一轮反馈，继续同一图与任务；不重置预算、不伪造调用，也不重复计算已取得的成果。报告记录 `completion_feedback`。模型在合法末尾 JSON 前添加正文或代码围栏时可解析唯一的协议对象；正文不作为答案或证据，多个协议对象、尾随正文、重复键及非有限值拒绝。解析后仍校验字段、真实执行、产物 ID 和必需交付项；代码子任务保留 `final_response` 供诊断。
 

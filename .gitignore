@@ -30,4 +30,5 @@ frontend/test-results/
 attachments/
 exports/
 credentials/
+.conversation-trash/
 

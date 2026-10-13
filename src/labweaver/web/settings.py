@@ -22,7 +22,9 @@ class WebSettings:
     env_file: Path | None = None
     image: str = "labweaver-python:0.2.0"
     execution_timeout: int = 60
-    analysis_max_tokens: int = 4096
+    analysis_max_tokens: int = 12288
+    model_timeout: float = 180.0
+    task_timeout: float = 900.0
     frontend_dir: Path | None = None
     allowed_hosts: tuple[str, ...] = ("127.0.0.1", "localhost")
     allowed_origins: tuple[str, ...] = ()

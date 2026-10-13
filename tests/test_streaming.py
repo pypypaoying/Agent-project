@@ -84,7 +84,9 @@ def test_real_graph_streams_before_model_completion_without_network(monkeypatch)
     deltas = [e["text"] for e in events if e["type"] == "answer_delta"]
     assert len(deltas) > 2
     assert "".join(deltas) == report["answer_text"]
-    assert [e["type"] for e in events[:2]] == ["tool_start", "tool_end"]
+    tools = [e["type"] for e in events if e["type"] in {"tool_start", "tool_end"}]
+    assert tools[:2] == ["tool_start", "tool_end"]
+    assert events[0]["type"] == "model_start"
     assert events[-1]["type"] == "validated" and events[-1]["status"] == "completed"
     paired(report)
 

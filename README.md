@@ -1,4 +1,8 @@
-# LabWeaver
+# Analyvia
+
+<img src="frontend/public/analyvia.svg" width="64" height="64" alt="Analyvia logo" />
+
+Analyvia（analysis＋via）强调从数据到可复现成果的路径，原名 LabWeaver。为兼容现有安装、凭据和历史，Python 包、`labweaver` 命令、Docker 镜像与应用数据目录继续使用原标识。GitHub 仓库地址保持可用。
 
 [![Verification](https://github.com/pypypaoying/LabWeaver/actions/workflows/tests.yml/badge.svg)](https://github.com/pypypaoying/LabWeaver/actions/workflows/tests.yml)
 
@@ -20,17 +24,19 @@ npm run build
 cd ..
 ```
 
-构建需要 Node.js；日常使用双击仓库根目录 `start-labweaver.cmd`，或执行 `uv run --frozen --no-sync --extra web labweaver serve --open`。重复启动验证并复用同一项目的服务；页面仅通过受保护的回环 API 访问本机数据，后端不返回 API Key。关闭浏览器页面保留后台服务；完全退出使用左下角 **退出应用**或在原启动终端按 **Ctrl+C**，有任务时先完成或停止。历史与已登记成果保留。
+构建需要 Node.js；日常使用双击仓库根目录 `start-analyvia.cmd`，或执行 `uv run --frozen --no-sync --extra web labweaver serve --open`。重复启动验证并复用同一项目的服务；页面仅通过受保护的回环 API 访问本机数据，后端不返回 API Key。关闭浏览器页面保留后台服务；完全退出使用左下角 **退出应用**或在原启动终端按 **Ctrl+C**，有任务时先完成或停止。历史与已登记成果保留。
 
 输入框右下角可以切换服务商和模型，默认 DeepSeek。左下角 **设置** 可填写 API Key、Base URL 和模型列表，添加其他 OpenAI Chat Completions 兼容服务商，并测试连接或从接口获取模型列表。Windows 新凭据使用当前用户的 DPAPI 加密保存；已有官方 DeepSeek `.env` 可继续通过引用使用，不复制密钥。切换在下一次任务生效，同一任务的主/代码 Agent 使用同一模型；运行中或等待回复时暂时锁定。详见[模型设置](docs/usage.md#模型选择与服务商配置)。
 
 聊天区展示真实工具、代码尝试、核验和保存进度，右侧执行面板提供完整代码、错误和检索出处；完整 CSV 下载与表格预览分开。数据库、附件与成果保存在用户应用数据目录，不进入仓库。搜索、工作空间、独立知识库和 Tauri 安装包尚未实现。应用设计见 [Desktop](docs/desktop.md)，操作及测试见 [使用](docs/usage.md)和[验收](docs/verification.md)。
 
+在左侧对话的 **⋯** 菜单（也可右键）重命名、置顶或永久删除。置顶随重启保留；删除前需确认，活动任务须先停止。永久删除会清理本机应用保存的消息、导入副本和运行成果，用户原文件保留；文件清理失败时明确提示并支持重试。
+
 ## 安装与 VS Code 使用
 
 1. 安装 Python 3.11/3.12、uv 和 Docker Desktop，启用 **Linux containers**。Windows 需要可运行的 WSL2 和硬件虚拟化；系统要求重启时先完成重启。
 2. 在项目目录执行 `uv sync --locked`，VS Code 选择 `.venv` 的解释器。
-3. 启动 Docker Desktop。在 VS Code 选择 **Terminal → Run Task → LabWeaver: Build analysis sandbox**，首次构建会下载锁定依赖和中文字体。也可一次执行：
+3. 启动 Docker Desktop。在 VS Code 选择 **Terminal → Run Task → Analyvia: Build analysis sandbox**，首次构建会下载锁定依赖和中文字体。也可一次执行：
 
    ```powershell
    docker build -t labweaver-python:0.2.0 sandbox
@@ -49,7 +55,9 @@ cd ..
 
 ## 配置与接口
 
-`labweaver.toml` 提供公开默认值，`labweaver.local.toml` 提供忽略的本地覆盖。代码模型输出默认 4096 tokens，可设置 `analysis_max_tokens`；执行超时默认 60 秒，可设置 `execution_timeout`。详细说明见 [使用](docs/usage.md)。
+`labweaver.toml` 提供公开默认值，`labweaver.local.toml` 提供忽略的本地覆盖。代码模型输出默认 12288 tokens，可设置 `analysis_max_tokens`；执行超时默认 60 秒，可设置 `execution_timeout`。详细说明见 [使用](docs/usage.md)。
+
+复杂任务同样核对每项实际产物；只打印日志、模型响应截断或缺少成果不能完成。代码模型的格式修正最多一次，仍占原模型预算；代码修正最多三次。浏览器服务默认单次模型等待 180 秒、累计运行 900 秒，等待用户澄清暂停累计计时；超限停止本应用的工作进程与所属容器，保留合法部分成果。代码尝试仍受独立 Docker 资源限制。
 
 保留配置驱动的 CLI（云端需本地 Docker daemon）：
 

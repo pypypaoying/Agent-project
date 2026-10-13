@@ -21,10 +21,11 @@ def replay_analysis(record_path, csv_path):
     )
     if snapshot.source["sha256"] != report["source"]["sha256"]:
         raise ValueError("Replay refused: input SHA-256 differs")
+    active_execution_ids = {a["execution_id"] for a in report.get("artifacts", [])}
     successful = [
         r
         for r in report["code_executions"]
-        if r["status"] == "completed" and r["artifact_ids"]
+        if r["status"] == "completed" and r["artifact_ids"] and r["id"] in active_execution_ids
     ]
     if not successful:
         raise ValueError("No successful artifact-producing script to replay")

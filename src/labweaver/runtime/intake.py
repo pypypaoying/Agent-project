@@ -23,7 +23,7 @@ def resolve_task(config: IntakeConfig) -> str:
     return task.strip()
 
 
-def _selected_model(config: IntakeConfig, *, max_tokens=1200):
+def _selected_model(config: IntakeConfig, *, max_tokens=2048):
     if config.mode == "offline":
         from labweaver.offline import OfflineIntakeModel
 
