@@ -287,6 +287,27 @@ describe('real-data chat interface', () => {
     expect(screen.getByRole('button', { name: '添加文件' })).toBeDisabled();
   });
 
+  it('continues a reopened live conversation with the saved model and retains the retry ID', async () => {
+    vi.mocked(api.health).mockResolvedValue({ mode: 'live' });
+    const savedSelection = { provider_id: 'deepseek', model_id: 'deepseek-v4-pro', provider_name: 'DeepSeek', base_url: 'https://api.deepseek.com' };
+    const detail = { ...withCsv(), conversation: { id: 'c', title: '问卷分析', frozen: true }, model_selection: savedSelection, runs: [{ id: 'first', task: '首次概览', status: 'completed' as const, model_selection: savedSelection }] };
+    await open(detail);
+    expect(screen.getByRole('button', { name: '选择模型' })).toHaveTextContent('deepseek-v4-pro');
+    vi.mocked(api.start).mockRejectedValueOnce(new Error('连接已断开')).mockResolvedValueOnce({ id: 'second', status: 'running' });
+    await userEvent.type(screen.getByRole('textbox', { name: '任务说明' }), '继续分析同一文件');
+    await userEvent.click(screen.getByRole('button', { name: '发送任务' }));
+    await screen.findByRole('alert');
+    await waitFor(() => expect(screen.getByRole('button', { name: '发送任务' })).toBeEnabled());
+    await userEvent.click(screen.getByRole('button', { name: '发送任务' }));
+    await waitFor(() => expect(api.start).toHaveBeenCalledTimes(2));
+    const calls = vi.mocked(api.start).mock.calls;
+    expect(calls[0]).toEqual(['c', '继续分析同一文件', undefined, expect.any(String), { provider_id: 'deepseek', model_id: 'deepseek-v4-pro' }]);
+    expect(calls[1]).toEqual(calls[0]);
+    expect(api.createConversation).not.toHaveBeenCalled();
+    expect(api.upload).not.toHaveBeenCalled();
+    expect(savedSelection.provider_name).toBe('DeepSeek');
+  });
+
   it('keeps API keys only in the settings form and clears them after returning to chat', async () => {
     await open();
     await userEvent.click(screen.getByRole('button', { name: '设置' }));

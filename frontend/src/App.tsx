@@ -216,7 +216,7 @@ export function App({ authenticated }: { authenticated: boolean }) {
       if (displayedConversation.current !== id) return;
       setSelectedContexts(result.runs.filter(run => run.status === 'completed').slice(-2).map(run => run.id)); setContextsExplicit(false);
       const last = result.runs.at(-1); setEvents(last?.events ?? []);
-      if (result.model_selection && health?.mode !== 'offline') setSelection(result.model_selection);
+      if (result.model_selection && health?.mode !== 'offline') setSelection({ provider_id: result.model_selection.provider_id, model_id: result.model_selection.model_id });
     } catch (reason) { setError((reason as Error).message); } finally { setBusy(false); }
   }, [refreshDetail, health?.mode]);
   const newConversation = useCallback(async () => {

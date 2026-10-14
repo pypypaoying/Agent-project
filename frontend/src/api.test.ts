@@ -54,6 +54,26 @@ describe('protected local API', () => {
     expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ task: '任务', request_id: 'request-unique', provider_id: 'deepseek', model_id: 'deepseek-v4-pro' });
   });
 
+  it('starts a follow-up from a hydrated history selection without sending display metadata', async () => {
+    const fetch = vi.fn().mockImplementation(async () => new Response(JSON.stringify({ id: 'r', status: 'running' }))); vi.stubGlobal('fetch', fetch);
+    const selection = { provider_id: 'deepseek', model_id: 'deepseek-v4-pro', provider_name: 'DeepSeek', base_url: 'https://api.deepseek.com' };
+    await api.start('c', '首次任务', undefined, 'first-request', selection);
+    await api.start('c', '继续分析', ['first-run'], 'follow-up-request', selection);
+    expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ task: '继续分析', request_id: 'follow-up-request', context_run_ids: ['first-run'], provider_id: 'deepseek', model_id: 'deepseek-v4-pro' });
+    expect(selection).toHaveProperty('provider_name', 'DeepSeek');
+  });
+
+  it('projects model identifiers at request boundaries and cannot overwrite task, context or retry IDs', async () => {
+    const fetch = vi.fn().mockImplementation(async () => new Response('{}')); vi.stubGlobal('fetch', fetch);
+    const selection = { provider_id: 'deepseek', model_id: 'deepseek-v4-pro', provider_name: 'DeepSeek', base_url: 'https://api.deepseek.com', task: '不应发送', context_run_ids: ['wrong'], request_id: 'wrong', api_key: 'untrusted-extra-field' };
+    await api.start('c', '实际任务', [], 'stable-request', selection);
+    await api.start('c', '实际任务', [], 'stable-request', selection);
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ task: '实际任务', request_id: 'stable-request', context_run_ids: [], provider_id: 'deepseek', model_id: 'deepseek-v4-pro' });
+    expect(fetch.mock.calls[0][1].body).toBe(fetch.mock.calls[1][1].body);
+    await api.defaultProvider(selection);
+    expect(JSON.parse(fetch.mock.calls[2][1].body)).toEqual({ provider_id: 'deepseek', model_id: 'deepseek-v4-pro' });
+  });
+
   it('shuts down through the protected endpoint and clears the expired application token after acceptance', async () => {
     window.history.replaceState(null, '', '/#token=application-token'); initializeToken();
     const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: 'stopping' }), { status: 202 })); vi.stubGlobal('fetch', fetch);
