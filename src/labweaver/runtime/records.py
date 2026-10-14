@@ -13,6 +13,7 @@ from labweaver.runtime.artifacts import (
     validate_svg,
     strict_json,
 )
+from labweaver.runtime.presentation import metric_presentation, presentation_markdown
 
 
 def _report_markdown(text):
@@ -30,34 +31,38 @@ def _report_markdown(text):
 def _markdown_brief(report):
     from labweaver.agent import _table_markdown
 
-    lines = [
-        "# Analyvia 任务报告",
-        "",
-        f"状态：{report['status']}",
-        "",
-        f"任务：{_report_markdown(report.get('task', ''))}",
-        "",
-        f"输入 SHA-256：{(report.get('source') or {}).get('sha256', '')}",
-        "",
-        _report_markdown(report.get("final_answer", "")),
-        "",
-        "## 交付项",
-        "",
-    ]
+    status = {"completed": "已完成", "error": "未完成，以下可能包含部分成果", "cancelled": "已停止", "awaiting_input": "等待确认"}.get(report["status"], report["status"])
+    task = report.get("task", "").strip().split("\n\n", 1)[0]
+    if len(task) > 500:
+        task = task[:500] + "…（完整任务见运行记录）"
+    lines = ["# AnaliyMaster 数据分析报告", "", f"**状态：{status}**", "", f"**任务**：{_report_markdown(task)}", ""]
+    timing = report.get("timing") or {}
+    if timing:
+        active, wall = timing.get("active_seconds"), timing.get("wall_seconds")
+        if isinstance(active, (int, float)):
+            lines.extend([f"**Agent 执行时间**：{active:.1f} 秒（不含工作进程启动、最终保存与等待用户回复）", ""])
+        if isinstance(wall, (int, float)):
+            lines.extend([f"**任务经过时间**：{wall:.1f} 秒（包含等待回复）", ""])
+        model_seconds, model_calls = timing.get("model_seconds"), timing.get("model_calls")
+        if isinstance(model_seconds, (int, float)) and isinstance(model_calls, int):
+            lines.extend([f"**模型请求累计用时**：{model_seconds:.1f} 秒，{model_calls} 次请求（主 Agent 与代码 Agent；不等同于任务总用时）", ""])
+    if report.get("status") != "completed":
+        lines.extend(["本次任务未全部完成。已取得的结果保留供检查，不能把部分成果当作完整交付。", ""])
+    lines.extend([_report_markdown(report.get("final_answer", "")), "", "## 交付清单", ""])
     for delivery in report.get("task_plan", []):
         marker = (
             "完成"
             if delivery["id"] in report.get("fulfilled_deliverable_ids", [])
             else "未完成"
         )
-        lines.append(f"- {delivery['id']}：{delivery['description']}（{marker}）")
+        lines.append(f"- {_report_markdown(delivery['description'])}（{marker}）")
+    if report.get("artifacts"):
+        lines.extend(["", "## 数据结果与图表", ""])
     for artifact in report.get("artifacts", []):
         lines.extend(
             [
                 "",
-                f"## {_report_markdown(artifact['label'])}",
-                "",
-                f"执行：{artifact['execution_id']}；交付项：{artifact['deliverable_id']}",
+                f"### {_report_markdown(artifact['label'])}",
                 "",
             ]
         )
@@ -65,18 +70,7 @@ def _markdown_brief(report):
         if artifact["kind"] == "figure" and paths.get("figure.png"):
             lines.extend([f"![分析图表]({Path(paths['figure.png']).name})", ""])
         elif artifact["kind"] == "metric":
-            value = artifact.get("value")
-            narrative = value.get("report_markdown") if isinstance(value, dict) else None
-            show_json = True
-            if isinstance(narrative, str) and len(narrative.encode()) <= 64 * 1024:
-                lines.extend([_report_markdown(narrative), ""])
-                value = {k: v for k, v in value.items() if k != "report_markdown"}
-                show_json = bool(value)
-            if show_json:
-                rendered = json.dumps(value, ensure_ascii=False, allow_nan=False, indent=2)
-                if len(rendered.encode()) > 64 * 1024:
-                    rendered = "内容超过报告预览预算，请查看完整指标 JSON 文件。"
-                lines.extend(["```json", rendered, "```", ""])
+            lines.extend([_report_markdown(presentation_markdown(metric_presentation(artifact.get("value")))), ""])
         elif artifact.get("preview"):
             lines.extend(
                 [
@@ -86,18 +80,18 @@ def _markdown_brief(report):
                     "",
                 ]
             )
-        lines.append(
-            "文件："
-            + "、".join(f"[{name}]({Path(path).name})" for name, path in paths.items())
-        )
+        names = {"metric.json": "完整指标 JSON", "table.csv": "完整结果 CSV", "data.csv": "绘图数据 CSV", "figure.png": "PNG 图表", "figure.svg": "SVG 图表"}
+        if paths:
+            lines.append("下载：" + "、".join(f"[{names.get(name, name)}]({Path(path).name})" for name, path in paths.items()))
     lines.extend(
         [
             "",
-            "## 执行与边界",
+            "## 复现与结果边界",
             "",
             "每次脚本从同一字符串快照重新计算，代码和错误记录随报告保存。源 CSV 不修改。",
             "执行成功与产物校验只证明程序运行并取得成果，不自动证明全部业务口径或结论。",
             "内存检查点仅支持本次进程中的继续对话；replay_analysis 重放成功脚本，不恢复会话。",
+            f"输入 SHA-256：{(report.get('source') or {}).get('sha256', '')}",
             "",
         ]
     )

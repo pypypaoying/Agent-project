@@ -12,7 +12,7 @@ npm run build
 cd ..
 ```
 
-双击 `start-analyvia.cmd`。也可从仓库根目录执行：
+双击 `start-analiymaster.cmd`。也可从仓库根目录执行：
 
 ```powershell
 uv run --frozen --no-sync --extra web labweaver serve --open
@@ -67,7 +67,7 @@ Windows 新 Key 加密保存在本机应用数据目录，只能由当前 Window
 
 ## Windows / VS Code
 
-首次安装 Docker Desktop 与 WSL2、启用 Virtual Machine Platform/硬件虚拟化，按系统要求重启。确认 Docker Desktop Linux 引擎已运行，再在 VS Code 的 Terminal → Run Task 选择 **Analyvia: Build analysis sandbox**。安装宿主依赖 `uv sync --locked` 后选择项目 `.venv` 解释器。
+首次安装 Docker Desktop 与 WSL2、启用 Virtual Machine Platform/硬件虚拟化，按系统要求重启。确认 Docker Desktop Linux 引擎已运行，再在 VS Code 的 Terminal → Run Task 选择 **AnaliyMaster: Build analysis sandbox**。安装宿主依赖 `uv sync --locked` 后选择项目 `.venv` 解释器。
 
 模型配置使用忽略的 `.env` 或 `labweaver.local.toml` 引用已有配置，例如：
 

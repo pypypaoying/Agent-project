@@ -206,6 +206,11 @@ class ConsoleStream:
             print(f"[代码结果] {event['status']}", flush=True)
         elif kind == "model_start":
             print("[生成] " + ("代码分析 Agent" if event["role"] == "analysis" else "主 Agent") + f"，第 {event['call']} 次请求", flush=True)
+        elif kind == "model_end":
+            duration = event.get("elapsed_seconds")
+            if isinstance(duration, (int, float)):
+                print("[生成结果] " + ("代码分析 Agent" if event["role"] == "analysis" else "主 Agent")
+                      + f"，第 {event['call']} 次请求，用时 {duration:.1f} 秒", flush=True)
         elif kind == "model_retry":
             print("[修正] 模型响应不完整，正在进行一次格式修正。", flush=True)
         elif kind == "tool_start":
@@ -213,6 +218,9 @@ class ConsoleStream:
         elif kind == "tool_end":
             print(f"[结果] {event['name']}：{event['status']}", flush=True)
         elif kind == "validated":
+            timing = event.get("timing")
+            if isinstance(timing, dict) and isinstance(timing.get("active_seconds"), (int, float)):
+                print(f"[执行用时] {timing['active_seconds']:.1f} 秒（不含等待用户回复）", flush=True)
             self.validated_answer = (
                 event["answer"]
                 if event["status"] == "completed" and self.answer == event["answer"]

@@ -103,7 +103,8 @@ class ExecutionHarness(AgentMiddleware):
             raise HarnessRejected("invalid_tool_configuration")
         start = time.monotonic()
         call = self.model_calls
-        self.progress({"type": "model_start", "role": self.role, "call": call})
+        self.progress({"type": "model_start", "role": self.role, "call": call,
+                       "started_monotonic": start})
         try:
             response = handler(
                 request.override(

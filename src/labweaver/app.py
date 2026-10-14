@@ -64,7 +64,7 @@ def _interactive_config(config):
     from labweaver.config import ConfigurationError
     from labweaver.runtime.intake import resolve_task
 
-    print("Analyvia：CSV 代码分析助手（源文件只读）。输入退出可结束当前会话。")
+    print("AnaliyMaster：CSV 代码分析助手（源文件只读）。输入退出可结束当前会话。")
     selected = input(f"CSV 完整路径（回车使用 {config.csv_path}）：").strip()
     csv_path = _selected_file(selected or str(config.csv_path))
     material_text = input(
@@ -227,7 +227,7 @@ def main(*, interactive: bool = False) -> int:
         if interactive:
             config = _interactive_config(config)
         print(
-            f"Analyvia | 模式：{config.mode} | CSV：{config.csv_path.name}", flush=True
+            f"AnaliyMaster | 模式：{config.mode} | CSV：{config.csv_path.name}", flush=True
         )
         print(f"可用任务资料：{len(config.material_paths)} 份", flush=True)
         print("正在运行 Agent，等待工具结果和模型回答……", flush=True)

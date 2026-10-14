@@ -2,7 +2,7 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Analyvia: Build analysis sandbox",
+      "label": "AnaliyMaster: Build analysis sandbox",
       "type": "process",
       "command": "docker",
       "windows": {"command": "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe"},

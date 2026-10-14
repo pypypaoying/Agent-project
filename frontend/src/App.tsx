@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
 import { api, ApiError, downloadFile, streamEvents } from './api';
 import { summarizeProgress, type ProgressStep } from './progress';
 import { defaultSelection, ModelPicker, providerReady, ProviderSettings } from './providers';
 import { ConversationDialog, ConversationRow, type ConversationAction } from './conversations';
 import { BRAND_NAME, BrandMark } from './brand';
+import { Markdown, MetricOutput } from './report';
+import { formatDuration, useRunTiming } from './timing';
 import type { Artifact, Conversation, ConversationDetail, ManagedFile, Message, ModelSelection, ProviderCatalog, Run, RunEvent, RunStatus, TablePreview } from './types';
 
 const activeStatuses: RunStatus[] = ['running', 'awaiting_input', 'cancelling'];
@@ -58,31 +59,11 @@ async function findEmptyDraft(conversations: Conversation[], current: Conversati
   return null;
 }
 
-function Markdown({ children }: { children: string }) {
-  return <div className="prose"><ReactMarkdown skipHtml components={{
-    a: ({ href, children: linkText }) => href && /^https?:\/\//.test(href) ? <a href={href} target="_blank" rel="noopener noreferrer">{linkText}</a> : <span>{linkText}</span>,
-    // Model-generated image paths are never loaded. Only registered PNG files are rendered below.
-    img: ({ alt }) => <span>{alt ?? ''}</span>,
-  }}>{children}</ReactMarkdown></div>;
-}
-
 function DataTable({ preview }: { preview: TablePreview }) {
   return <div className="table-scroll"><table>
     <thead><tr>{preview.columns.map((column, index) => <th key={index}>{displayColumn(column)}</th>)}</tr></thead>
     <tbody>{preview.rows.map((row, index) => <tr key={index}>{row.map((cell, column) => <td key={column}>{text(cell)}</td>)}</tr>)}</tbody>
   </table>{preview.rows.length === 0 && <p className="muted empty-row">结果为空</p>}</div>;
-}
-
-function MetricOutput({ value }: { value: unknown }) {
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    const object = value as Record<string, unknown>;
-    if (typeof object.report_markdown === 'string' && new TextEncoder().encode(object.report_markdown).length <= 65536) {
-      const remaining = Object.fromEntries(Object.entries(object).filter(([key]) => key !== 'report_markdown'));
-      return <><Markdown>{object.report_markdown}</Markdown>{Object.keys(remaining).length > 0 && <MetricOutput value={remaining} />}</>;
-    }
-    return <dl className="metric-grid">{Object.entries(value as Record<string, unknown>).map(([label, metric]) => <div key={label}><dt>{label}</dt><dd>{text(metric)}</dd></div>)}</dl>;
-  }
-  return <div className="metric-value">{text(value)}</div>;
 }
 
 function ProtectedImage({ file, onError }: { file: ManagedFile; onError: (message: string) => void }) {
@@ -113,7 +94,7 @@ function ArtifactCard({ artifact, onError }: { artifact: Artifact; onError: (mes
     <div className="artifact-heading"><strong>{artifact.label ?? ({ table: '结果表', metric: '计算结果', figure: '图表' }[artifact.kind] ?? '成果')}</strong>
       <div className="download-list">{(artifact.files ?? []).map(file => <button className="link-button" key={file.id} onClick={() => void downloadFile(file).catch(error => onError(error.message))}><Icon name="download" />{extension(file.name).toUpperCase()}</button>)}</div>
     </div>
-    {artifact.kind === 'metric' && <MetricOutput value={artifact.value} />}
+    {artifact.kind === 'metric' && <MetricOutput value={artifact.value} presentation={artifact.presentation} previewOnly={artifact.value_preview_only} />}
     {(artifact.files ?? []).filter(file => extension(file.name) === 'png').map(file => <ProtectedImage key={file.id} file={file} onError={onError} />)}
     {isTable && <>{loading && !preview ? <p className="muted">正在读取结果…</p> : preview && <DataTable preview={preview} />}
       {preview && <div className="pagination"><span>共 {preview.row_count.toLocaleString()} 行 · 当前 {preview.row_count === 0 ? 0 : offset + 1}–{Math.min(offset + preview.rows.length, preview.row_count)} 行</span><button disabled={offset === 0 || loading} onClick={() => setOffset(Math.max(0, offset - 20))}>上一页</button><button disabled={offset + preview.rows.length >= preview.row_count || loading} onClick={() => setOffset(offset + 20)}>下一页</button></div>}
@@ -133,24 +114,27 @@ function RunProgress({ run, events }: { run: Run; events: RunEvent[] }) {
   const visibleCount = active ? 6 : 5;
   const older = steps.slice(0, Math.max(0, steps.length - visibleCount));
   const recent = steps.slice(-visibleCount);
-  return <section className="run-progress" aria-label="真实执行过程"><div className="progress-heading">执行过程<span>{steps.length} 项实际记录</span></div>
+  const content = <><div className="progress-heading">执行过程<span>{steps.length} 项实际记录</span></div>
     {Array.isArray(plans) && plans.length > 0 && <details className="progress-plan" open={active}><summary>交付计划</summary><ul>{plans.map((raw, index) => { const plan = raw as Record<string, unknown>; return <li key={index}>{text(plan.description)}</li>; })}</ul></details>}
     {older.length > 0 && <details className="older-progress"><summary>查看较早的 {older.length} 项执行记录</summary><ol>{older.map(step => <ProgressRow key={step.id} step={step} />)}</ol></details>}
     <ol className="recent-progress" aria-live={active ? 'polite' : 'off'}>{recent.map(step => <ProgressRow key={step.id} step={step} />)}</ol>
-  </section>;
+  </>;
+  return <section className="run-progress" aria-label="真实执行过程">{run.status === 'completed' ? <details className="completed-progress"><summary>执行过程与核验记录<span>{steps.length} 项实际记录</span></summary>{content}</details> : content}</section>;
 }
 
 function RunCard({ run, liveAnswer, messages, events, onError, onRerun }: { run: Run; liveAnswer?: string; messages: Message[]; events: RunEvent[]; onError: (message: string) => void; onRerun: (task: string) => void }) {
   const final = answerText(run.final_answer);
   const provisional = activeStatuses.includes(run.status);
+  const timing = useRunTiming(run, events);
   return <article className="run-card" data-testid={`run-${run.id}`}>
     {run.task && <div className="user-message"><span className="message-label">你</span><p>{run.task}</p></div>}
     {messages.filter(message => message.question_id && (message.role === 'user' || message.state === 'answered')).map(message => <div key={message.id} className={`confirmation-message ${message.role === 'user' ? 'confirmed-reply' : ''}`}><span className="message-label">{message.role === 'user' ? '你的确认回复' : 'Agent 澄清'}</span><p>{message.content}</p></div>)}
     <div className="assistant-message">
-      <div className="assistant-heading"><BrandMark className="small" /><strong>{BRAND_NAME}</strong><span className={`status status-${run.status}`}>{labels[run.status]}</span></div>
+      <div className="assistant-heading"><BrandMark className="small" /><strong>{BRAND_NAME}</strong><span className={`status status-${run.status}`}>{labels[run.status]}</span>{timing.available && <span className="run-duration" aria-label="任务执行用时" title="运行期间本地持续计时，终态以宿主实际记录为准；不含等待用户回复">执行用时 {formatDuration(timing.activeSeconds)}</span>}</div>
       {run.model_selection && <p className="run-model-label muted">{run.model_selection.provider_name ?? run.model_selection.provider_id} · {run.model_selection.model_id}</p>}
+      {timing.available && (timing.waiting || timing.incomplete || timing.currentModels.length > 0) && <div className="live-timing" aria-live="off">{timing.waiting && <span>等待回复，计时暂停</span>}{timing.incomplete && <span>服务中断，仅保留最后已记录用时</span>}{timing.currentModels.map(model => <span key={`${model.role}:${model.parentCallId}:${model.call}`}><span className="pulse" />{model.role === 'analysis' ? '代码 Agent' : '主 Agent'} · 第 {model.call} 次模型请求 · 已等待 {formatDuration(model.elapsedSeconds)}</span>)}</div>}
       <RunProgress run={run} events={events} />
-      {(liveAnswer || final) && <><Markdown>{final || liveAnswer || ''}</Markdown>{provisional && <span className="muted verification">正文待核验，尚未确认交付完成</span>}</>}
+      {(liveAnswer || final) && <section className="analysis-report" aria-label="分析报告正文"><Markdown>{final || liveAnswer || ''}</Markdown>{provisional && <span className="muted verification">正文待核验，尚未确认交付完成</span>}</section>}
       {run.status === 'running' && !liveAnswer && !final && <p className="muted working"><span className="pulse" />正在分析，回答与成果仍需核验。</p>}
       {Boolean(run.error) && <p className="run-error">{text(run.error)}</p>}
       {run.status === 'interrupted' && <div className="interrupted-note"><p>服务重启前的执行已中断。历史结果仍可查看；原中断节点不能恢复。</p><button onClick={() => onRerun(run.task ?? '')}>按原任务重新执行</button></div>}
@@ -162,9 +146,11 @@ function RunCard({ run, liveAnswer, messages, events, onError, onRerun }: { run:
 
 function ExecutionPanel({ events, run, onClose, onError }: { events: RunEvent[]; run?: Run; onClose: () => void; onError: (message: string) => void }) {
   const names: Record<string, string> = { running: '任务运行', completed: '交付完成', error: '执行未完成', cancelled: '任务停止', interrupted: '运行中断', cancelling: '正在停止', artifacts_saved: '已保存部分成果', container_lifecycle: '沙箱生命周期', plan: '任务计划', tool_start: '工具开始', tool_end: '工具结束', model_start: '模型请求开始', model_end: '模型请求结果', model_retry: '模型响应修正', execution_start: '执行 Python', execution_end: '执行结果', retrieval_result: '资料检索', material_search: '资料检索', completion_feedback: '结果核验', saving: '保存成果', validated: '执行证据核验', awaiting_input: '等待用户回复' };
-  const detailEvents = events.filter(event => event.type !== 'answer_delta');
+  const timing = useRunTiming(run ?? { id: '', status: 'completed' }, events);
+  const detailEvents = events.filter(event => event.type !== 'answer_delta' && event.type !== 'timing');
   return <aside className="execution-panel" aria-label="执行面板"><header><strong>执行与成果</strong><button className="icon-button" aria-label="关闭执行面板" onClick={onClose}><Icon name="close" /></button></header>
     {run && <div className={`panel-state status-${run.status}`}>{labels[run.status]}</div>}
+    {timing.available && <dl className="panel-timing"><div><dt>任务执行用时</dt><dd>{formatDuration(timing.activeSeconds)}</dd></div><div><dt>模型请求累计</dt><dd>{formatDuration(timing.modelSeconds)} · {timing.modelCalls} 次</dd></div></dl>}
     {!detailEvents.length && <p className="muted panel-empty">任务开始后，这里显示真实计划、工具执行、代码与来源。</p>}
     <div className="event-list">{detailEvents.map(event => <details key={event.seq} className="event-card" open={event.type === 'plan' || event.type === 'retrieval_result' || event.type === 'execution_end' && event.payload.status === 'error'}><summary><span className="event-index">{event.seq}</span><span>{names[event.type] ?? event.type}</span>{typeof event.payload.name === 'string' ? <small>{event.payload.name}</small> : Boolean(event.payload.role) && <small>{event.payload.role === 'analysis' ? '代码 Agent' : '主 Agent'}</small>}</summary>
       {typeof event.payload.code === 'string' && <pre className="code-block"><code>{event.payload.code}</code></pre>}
@@ -410,7 +396,7 @@ export function App({ authenticated }: { authenticated: boolean }) {
   };
 
   if (!authenticated) return <main className="access-screen"><BrandMark /><h1>{BRAND_NAME}</h1><p>请通过正式启动器打开应用，以获取本次运行的本地访问令牌。</p><p className="muted">已打开的页面失效时，请重新运行启动器。模型供应商在应用设置中配置。</p></main>;
-  if (exited) return <main className="access-screen"><BrandMark /><h1>应用已退出</h1><p>本地服务正在关闭，已保存的对话与成果会保留。</p><p className="muted">可以关闭当前页面。再次使用时，请重新双击 Analyvia 启动器。</p></main>;
+  if (exited) return <main className="access-screen"><BrandMark /><h1>应用已退出</h1><p>本地服务正在关闭，已保存的对话与成果会保留。</p><p className="muted">可以关闭当前页面。再次使用时，请重新双击 {BRAND_NAME} 启动器。</p></main>;
 
   return <div className={`app-shell ${panel && page === 'chat' ? 'panel-open' : ''}`} onDragOver={event => { event.preventDefault(); if (page === 'chat' && event.dataTransfer.types.includes('Files')) setDragging(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false); }} onDrop={event => { event.preventDefault(); setDragging(false); if (page === 'chat') void uploadFiles(Array.from(event.dataTransfer.files)); }}>
     <nav className="sidebar" aria-label="对话导航"><div className="logo"><BrandMark /><strong>{BRAND_NAME}</strong><span className="logo-caption">本地数据分析</span></div>

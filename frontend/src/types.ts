@@ -5,8 +5,13 @@ export interface ManagedFile {
   id: string; name: string; role?: 'csv' | 'material'; size?: number; media_type?: string;
   preview?: Partial<TablePreview> & { text?: string }; parse_error?: unknown;
 }
+export type PresentationScalar = string | number | boolean | null;
+export type PresentationBlock = { type: 'table'; title?: string; columns: string[]; rows: PresentationScalar[][]; truncated?: boolean } | { type: 'paragraph' | 'markdown'; text: string };
+export interface ArtifactPresentation { blocks: PresentationBlock[]; note?: string; }
 export interface Artifact {
   id: string; kind: string; label?: string; row_count?: number; columns?: unknown[]; value?: unknown;
+  presentation?: ArtifactPresentation;
+  value_preview_only?: boolean;
   files: ManagedFile[];
 }
 export interface PendingInput { id: string; kind: string; question: string; candidates?: unknown[]; }
@@ -19,6 +24,7 @@ export interface Run {
   error?: unknown; pending_input?: PendingInput | null; artifacts?: Artifact[]; downloads?: ManagedFile[];
   events?: RunEvent[]; created_at?: string; context_run_ids?: string[];
   model_selection?: ModelSelection & { provider_name?: string; base_url?: string };
+  timing?: unknown;
 }
 export interface Message { id: string; role: string; content: string; state?: string; run_id?: string; question_id?: string; }
 export interface ConversationDetail { conversation: Conversation; files: ManagedFile[]; messages: Message[]; runs: Run[]; model_selection?: ModelSelection; }

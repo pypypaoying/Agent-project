@@ -80,25 +80,50 @@ textarea { resize: none; color: var(--text); }
 .confirmation-message p { margin: 7px 0 0; white-space: pre-wrap; line-height: 1.8; }
 .confirmed-reply { border-color: var(--accent); margin-left: 20px; }
 .assistant-message { font-size: 16px; line-height: 1.8; }
-.assistant-heading { display: flex; gap: 9px; align-items: center; margin-bottom: 15px; font-size: 15px; }
+.assistant-heading { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; margin-bottom: 15px; font-size: 15px; }
 .assistant-heading strong { font-weight: 550; }
+.run-duration { margin-left: auto; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.live-timing { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13px; line-height: 1.7; color: var(--muted); margin: -2px 0 15px; }
+.live-timing > span { display: inline-flex; align-items: center; gap: 8px; }
+.panel-timing { display: grid; gap: 7px; font-size: 12px; margin: 0 0 18px; padding-bottom: 14px; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+.panel-timing > div { display: flex; gap: 10px; justify-content: space-between; }
+.panel-timing dt { color: var(--muted); }
+.panel-timing dd { margin: 0; }
 .status { font-size: 12px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 5px; color: var(--muted); margin-left: 4px; }
 .status-completed { color: var(--accent); }
 .status-error { color: var(--error); }
 .status-awaiting_input { color: #a27628; }
 .prose { overflow-wrap: anywhere; }
-.prose p { margin: 9px 0 16px; }
-.prose h1, .prose h2, .prose h3 { font-size: 18px; margin: 22px 0 10px; font-weight: 600; }
+.prose p { margin: 10px 0 18px; line-height: 1.9; }
+.prose h1 { font-size: 25px; line-height: 1.4; margin: 27px 0 18px; font-weight: 650; letter-spacing: -.35px; }
+.prose h2 { font-size: 21px; line-height: 1.5; margin: 29px 0 14px; padding-top: 10px; font-weight: 620; border-top: 1px solid var(--border); }
+.prose h3 { font-size: 18px; line-height: 1.6; margin: 23px 0 11px; font-weight: 620; }
+.prose h4 { font-size: 16px; line-height: 1.6; margin: 18px 0 9px; font-weight: 620; }
+.prose strong { font-weight: 650; color: var(--text); }
 .prose ul, .prose ol { padding-left: 24px; list-style: revert; }
-.prose li { margin: 5px 0; }
+.prose li { margin: 8px 0; line-height: 1.85; }
+.prose li p { margin: 6px 0; }
+.prose blockquote { border-left: 3px solid var(--accent); padding: 1px 16px; margin: 20px 0; color: var(--muted); }
+.prose hr { border: 0; border-top: 1px solid var(--border); margin: 24px 0; }
 .prose a { color: var(--accent); text-decoration: underline; }
 .prose pre { padding: 15px; background: var(--soft); border-radius: 8px; overflow: auto; }
 .prose code { font-family: Consolas, monospace; font-size: 14px; background: var(--soft); padding: 2px 4px; }
+.analysis-report { margin: 20px 0 25px; }
+.report-table-scroll { overflow: auto; max-height: 540px; border: 1px solid var(--border); border-radius: 7px; margin: 12px 0 18px; }
+.report-table-scroll table { white-space: normal; font-size: 14px; font-variant-numeric: tabular-nums; }
+.report-table-scroll th { min-width: 85px; }
+.report-table-scroll td { min-width: 85px; max-width: 360px; line-height: 1.7; overflow-wrap: anywhere; vertical-align: top; }
+.report-table-scroll th:first-child, .report-table-scroll td:first-child { min-width: 120px; }
 .verification { display: inline-block; font-size: 13px; margin: 0 0 12px; }
 .working { font-size: 15px; display: flex; gap: 10px; align-items: center; }
 .run-progress { padding: 0 0 12px; margin: 0 0 20px; border-bottom: 1px solid var(--border); font-size: 14px; }
 .progress-heading { display: flex; gap: 10px; align-items: center; font-size: 14px; color: var(--text); margin-bottom: 10px; }
 .progress-heading > span { color: var(--muted); font-size: 12px; }
+.completed-progress > summary { display: flex; justify-content: space-between; gap: 15px; color: var(--muted); font-size: 13px; padding: 3px 0; }
+.completed-progress > summary::before { content: "▸"; margin-right: -8px; }
+.completed-progress[open] > summary::before { content: "▾"; }
+.completed-progress > summary > span { margin-left: auto; font-size: 12px; }
+.completed-progress[open] > summary { margin-bottom: 15px; }
 .progress-row { display: flex; align-items: center; gap: 10px; min-height: 32px; line-height: 1.7; padding: 4px 0; }
 .progress-row > div { flex: 1; min-width: 0; }
 .progress-row small { display: block; color: var(--muted); font-size: 12px; }
@@ -126,10 +151,15 @@ textarea { resize: none; color: var(--text); }
 .download-list { display: flex; flex-wrap: wrap; gap: 8px; }
 .link-button { display: inline-flex; gap: 5px; align-items: center; color: var(--muted); font-size: 12px; }
 .link-button:hover { color: var(--text); }
-.metric-value { padding: 20px; font-size: 28px; color: var(--accent); }
-.metric-grid { margin: 0; padding: 16px 20px; display: grid; grid-template-columns: repeat(auto-fit, minmax(125px, 1fr)); gap: 18px; }
-.metric-grid dt { color: var(--muted); font-size: 13px; margin-bottom: 6px; }
-.metric-grid dd { margin: 0; color: var(--accent); font-size: 23px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.report-data { padding: 6px 20px 17px; }
+.report-data-section { margin: 16px 0 20px; }
+.report-data-section h4 { font-size: 15px; font-weight: 600; margin: 0 0 10px; overflow-wrap: anywhere; }
+.report-data-section .report-table-scroll { margin: 0; }
+.report-paragraph { line-height: 1.85; margin: 15px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.report-note { font-size: 12px; line-height: 1.7; color: var(--muted); margin: 10px 0 0; }
+.raw-json { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 15px; font-size: 13px; }
+.raw-json summary { color: var(--muted); }
+.raw-json pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 360px; overflow: auto; font-size: 12px; line-height: 1.6; padding: 12px; border-radius: 7px; background: var(--soft); }
 .chart { display: block; width: 100%; height: auto; max-height: 650px; object-fit: contain; padding: 12px; background: #fff; }
 .table-scroll { overflow: auto; max-height: 430px; }
 table { width: 100%; border-collapse: collapse; font-size: 14px; white-space: nowrap; }

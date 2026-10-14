@@ -113,7 +113,8 @@ def preview_artifact(store, artifact_id, offset=0, limit=20):
     artifact = store.require("artifacts", artifact_id)
     meta = json.loads(artifact["metadata_json"])
     if meta["kind"] == "metric":
-        return {"value": meta["value"]}
+        from labweaver.runtime.presentation import metric_display_fields
+        return metric_display_fields(meta["value"])
     with store.connect() as db:
         entry = db.execute("SELECT file_id FROM artifact_files WHERE artifact_id=? AND name IN ('table.csv','data.csv')", (artifact_id,)).fetchone()
     if not entry:

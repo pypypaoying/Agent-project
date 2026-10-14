@@ -1,8 +1,8 @@
-# Analyvia
+# AnaliyMaster
 
-<img src="frontend/public/analyvia.svg" width="64" height="64" alt="Analyvia logo" />
+<img src="frontend/public/analyvia.svg" width="64" height="64" alt="AnaliyMaster logo" />
 
-Analyvia（analysis＋via）强调从数据到可复现成果的路径，原名 LabWeaver。为兼容现有安装、凭据和历史，Python 包、`labweaver` 命令、Docker 镜像与应用数据目录继续使用原标识。GitHub 仓库地址保持可用。
+AnaliyMaster 是本地优先的通用数据分析助手，原名 LabWeaver。它从自然语言任务生成可核对的分析报告、结果表、图表与代码。为兼容现有安装、凭据和历史，Python 包、`labweaver` 命令、Docker 镜像与应用数据目录继续使用原标识。GitHub 仓库地址保持可用，现有 logo 沿用。
 
 [![Verification](https://github.com/pypypaoying/LabWeaver/actions/workflows/tests.yml/badge.svg)](https://github.com/pypypaoying/LabWeaver/actions/workflows/tests.yml)
 
@@ -24,7 +24,7 @@ npm run build
 cd ..
 ```
 
-构建需要 Node.js；日常使用双击仓库根目录 `start-analyvia.cmd`，或执行 `uv run --frozen --no-sync --extra web labweaver serve --open`。重复启动验证并复用同一项目的服务；页面仅通过受保护的回环 API 访问本机数据，后端不返回 API Key。关闭浏览器页面保留后台服务；完全退出使用左下角 **退出应用**或在原启动终端按 **Ctrl+C**，有任务时先完成或停止。历史与已登记成果保留。
+构建需要 Node.js；日常使用双击仓库根目录 `start-analiymaster.cmd`，或执行 `uv run --frozen --no-sync --extra web labweaver serve --open`。重复启动验证并复用同一项目的服务；页面仅通过受保护的回环 API 访问本机数据，后端不返回 API Key。关闭浏览器页面保留后台服务；完全退出使用左下角 **退出应用**或在原启动终端按 **Ctrl+C**，有任务时先完成或停止。历史与已登记成果保留。
 
 输入框右下角可以切换服务商和模型，默认 DeepSeek。左下角 **设置** 可填写 API Key、Base URL 和模型列表，添加其他 OpenAI Chat Completions 兼容服务商，并测试连接或从接口获取模型列表。Windows 新凭据使用当前用户的 DPAPI 加密保存；已有官方 DeepSeek `.env` 可继续通过引用使用，不复制密钥。切换在下一次任务生效，同一任务的主/代码 Agent 使用同一模型；运行中或等待回复时暂时锁定。详见[模型设置](docs/usage.md#模型选择与服务商配置)。
 
@@ -32,11 +32,15 @@ cd ..
 
 在左侧对话的 **⋯** 菜单（也可右键）重命名、置顶或永久删除。置顶随重启保留；删除前需确认，活动任务须先停止。永久删除会清理本机应用保存的消息、导入副本、归属该对话的临时快照和运行成果，用户原文件保留；文件清理失败时明确提示并支持重试。
 
+默认以分析报告展示结论：复杂任务使用章节、自然段、重点、核心结果表及真实图表；指标以可读表格呈现，原始 JSON 可展开或下载。长数组和矩阵明确标注预览范围，完整结果仍保留。超过浏览器安全整数范围的数值使用精确文本展示，完整精度以 JSON 下载文件为准。既有历史指标无需重跑即可使用新的展示方式。
+
+运行时显示本任务用时与当前主／代码 Agent 模型等待时间，每秒保存宿主计时事件。等待用户澄清暂停主动执行计时；完成、停止或错误后冻结，刷新和重启不会从零计算旧记录。界面执行时间包括工作进程启动和成果保存，报告的 Agent 时间只统计 Agent 运行；模型请求累计用时另列。旧版没有计时证据的历史显示“未记录”，服务意外中断只保留最后实测时间并标记未记录尾段。
+
 ## 安装与 VS Code 使用
 
 1. 安装 Python 3.11/3.12、uv 和 Docker Desktop，启用 **Linux containers**。Windows 需要可运行的 WSL2 和硬件虚拟化；系统要求重启时先完成重启。
 2. 在项目目录执行 `uv sync --locked`，VS Code 选择 `.venv` 的解释器。
-3. 启动 Docker Desktop。在 VS Code 选择 **Terminal → Run Task → Analyvia: Build analysis sandbox**，首次构建会下载锁定依赖和中文字体。也可一次执行：
+3. 启动 Docker Desktop。在 VS Code 选择 **Terminal → Run Task → AnaliyMaster: Build analysis sandbox**，首次构建会下载锁定依赖和中文字体。也可一次执行：
 
    ```powershell
    docker build -t labweaver-python:0.2.0 sandbox

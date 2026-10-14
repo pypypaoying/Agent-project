@@ -55,7 +55,7 @@ def load_config(
     )
 
 
-def create_model(config: ModelConfig, *, max_tokens=2048):
+def create_model(config: ModelConfig, *, max_tokens=4096):
     from langchain_openai import ChatOpenAI
 
     options = {}

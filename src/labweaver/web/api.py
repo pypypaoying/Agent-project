@@ -83,7 +83,7 @@ def create_app(settings, *, manager=None, instance_id=None, port=8765, shutdown=
         yield
         await asyncio.to_thread(service.close)
 
-    app = FastAPI(title="Analyvia Desktop", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+    app = FastAPI(title="AnaliyMaster Desktop", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.manager = service
     app.state.shutdown_requested = False
 

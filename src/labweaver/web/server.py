@@ -24,8 +24,8 @@ def _reuse(registry, settings, args):
     if not existing:
         return False
     if existing['mode'] != settings.mode:
-        raise AppError('running_mode_mismatch', '已有 Analyvia 使用另一运行模式，请退出应用后再切换模式。', 409)
-    print(f'Analyvia 已在 http://127.0.0.1:{args.port} 运行，复用现有服务。', flush=True)
+        raise AppError('running_mode_mismatch', '已有 AnaliyMaster 使用另一运行模式，请退出应用后再切换模式。', 409)
+    print(f'AnaliyMaster 已在 http://127.0.0.1:{args.port} 运行，复用现有服务。', flush=True)
     if args.open:
         _open(args.port, existing['token'])
     return True
@@ -87,8 +87,8 @@ def serve(args):
             time.sleep(.15)
         else:
             if starting and starting.get('state') == 'starting':
-                raise AppError('application_starting', '运行记录显示 Analyvia 正在启动，尚未完成身份验证。请稍后重新打开；本次未打开新页面。', 409) from None
-            raise AppError('port_in_use', f'端口 {args.port} 已被占用，且未能验证为同一 Analyvia 服务。请先关闭原启动终端，或使用其他端口；本次未打开新页面。', 409) from None
+                raise AppError('application_starting', '运行记录显示 AnaliyMaster 正在启动，尚未完成身份验证。请稍后重新打开；本次未打开新页面。', 409) from None
+            raise AppError('port_in_use', f'端口 {args.port} 已被占用，且未能验证为同一 AnaliyMaster 服务。请先关闭原启动终端，或使用其他端口；本次未打开新页面。', 409) from None
 
     instance_id, app = uuid.uuid4().hex, None
     previous_cwd = os.getcwd()
@@ -98,7 +98,7 @@ def serve(args):
 
         app = create_app(settings, instance_id=instance_id, port=args.port, shutdown=shutdown)
         registry.write(instance_id, settings.mode, settings.token, app.state.manager.settings.data_dir, state='starting')
-        print('Analyvia 正在启动并检查本机环境……', flush=True)
+        print('AnaliyMaster 正在启动并检查本机环境……', flush=True)
         health = app.state.manager.health()
         if not health['model']['ready']:
             print('模型配置未就绪。可浏览历史；分析前请在设置页面配置服务商与 API Key。', flush=True)
@@ -110,7 +110,7 @@ def serve(args):
                 await super().startup(sockets=sockets)
                 if self.started and not self.should_exit:
                     registry.write(instance_id, settings.mode, settings.token, app.state.manager.settings.data_dir)
-                    print(f'Analyvia Desktop: http://127.0.0.1:{args.port} | mode={settings.mode}', flush=True)
+                    print(f'AnaliyMaster Desktop: http://127.0.0.1:{args.port} | mode={settings.mode}', flush=True)
                     print('关闭页面保留后台服务；退出应用可用左下角按钮或在启动终端按 Ctrl+C。', flush=True)
                     if args.open:
                         threading.Thread(target=_open, args=(args.port, settings.token), daemon=True).start()

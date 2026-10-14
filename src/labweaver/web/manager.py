@@ -73,6 +73,7 @@ class Runtime:
                                                      self.commands, self.events, self.cancel_signal), daemon=False)
         self.known_containers = {}
         self.deadline = None
+        self.last_timing_at = None
         self.closed = False
         try:
             self.process.start()
@@ -90,6 +91,8 @@ class Runtime:
     def stop(self, *, force=False):
         if self.closed:
             if not self.process.is_alive():
+                if self.deadline is not None:
+                    self.deadline.finish_models()
                 self._cleanup_workspace()
             return
         self.closed = True
@@ -110,6 +113,8 @@ class Runtime:
                     self.process.kill()
                     self.process.join(timeout=3)
         if not self.process.is_alive():
+            if self.deadline is not None:
+                self.deadline.finish_models()
             self._cleanup_workspace()
 
 
@@ -140,7 +145,7 @@ class TaskManager:
                       extra={"cleanup_confirmed": cleaned})
 
     def emit(self, run_id, kind, payload):
-        role = "analysis_agent" if kind in {"execution_start", "execution_end"} else "host" if kind in {"container_lifecycle", "runtime_identity", "saving", "artifacts_saved"} else "main_agent"
+        role = "analysis_agent" if kind in {"execution_start", "execution_end"} else "host" if kind in {"container_lifecycle", "runtime_identity", "saving", "artifacts_saved", "timing"} else "main_agent"
         return self.store.append_event(run_id, kind, scrub({"role": role, **payload}, self.secrets))
 
     def health(self, *, refresh=False):
@@ -274,7 +279,9 @@ class TaskManager:
                 db.execute("INSERT INTO run_models VALUES (?,?)", (id, encode(selection)))
                 db.execute("INSERT INTO conversation_models VALUES (?,?) ON CONFLICT(conversation_id) DO UPDATE SET selection_json=excluded.selection_json", (conversation_id, encode(selection)))
             self.active = id
-            self.emit(id, "running", {"status": "running", "history_run_ids": selected_ids, "model_selection": selection})
+            deadline = RunDeadline(self.settings.model_timeout, self.settings.task_timeout)
+            self.emit(id, "running", {"status": "running", "history_run_ids": selected_ids,
+                                      "model_selection": selection, "timing": deadline.snapshot()})
             try:
                 if self.runtime is None:
                     runtime_settings = replace(self.settings, model_config=model_config)
@@ -285,13 +292,17 @@ class TaskManager:
                     self.runtime.selection_key = selection_key
                     self.runtime.model_config = model_config
                     self.runtime.run_id = id
-                    self.runtime.deadline = RunDeadline(self.settings.model_timeout, self.settings.task_timeout)
+                    self.runtime.deadline = deadline
                     threading.Thread(target=self._listen, args=(self.runtime,), daemon=True).start()
                 self.runtime.run_id = id
-                self.runtime.deadline = RunDeadline(self.settings.model_timeout, self.settings.task_timeout)
+                self.runtime.deadline = deadline
+                self.runtime.last_timing_at = None
+                self._emit_timing(self.runtime, force=True)
                 self.runtime.cancel_signal.clear()
                 self.runtime.commands.put({"op": "invoke", "run_id": id, "task": task})
             except Exception:
+                deadline.stop()
+                self.emit(id, "timing", {"timing": deadline.snapshot()})
                 self.fail(id, "worker_start_failed", "无法启动 Agent 工作进程。")
             return self.run_view(id)
 
@@ -315,9 +326,11 @@ class TaskManager:
                            (uid(), run["conversation_id"], run_id, "user", reply, "sent", now(), question_id, request_id))
                 db.execute("UPDATE runs SET status='running',pending_json=NULL,updated_at=? WHERE id=?", (now(), run_id))
                 db.execute("UPDATE messages SET state='answered' WHERE run_id=? AND question_id=? AND role='assistant'", (run_id, question_id))
-            self.emit(run_id, "running", {"status": "running", "resumed_question_id": question_id})
             if getattr(self.runtime, "deadline", None):
                 self.runtime.deadline.resume()
+            self.emit(run_id, "running", {"status": "running", "resumed_question_id": question_id,
+                                         "timing": self._timing_snapshot(run_id)})
+            self._emit_timing(self.runtime, force=True)
             self.runtime.commands.put({"op": "resume", "run_id": run_id, "reply": reply})
             return self.run_view(run_id)
 
@@ -325,6 +338,7 @@ class TaskManager:
         while not runtime.closed and not self.closed:
             if self._deadline_exceeded(runtime):
                 break
+            self._emit_timing(runtime)
             try:
                 item = runtime.events.get(timeout=0.5)
             except queue.Empty:
@@ -397,6 +411,44 @@ class TaskManager:
                             request = "draft:" + payload["id"]
                             db.execute("INSERT INTO messages(id,conversation_id,run_id,role,content,state,created_at,request_id) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(run_id,request_id) DO UPDATE SET content=content || excluded.content",
                                        (uid(), run["conversation_id"], run_id, "assistant", payload["text"], "provisional", now(), request))
+
+    def _emit_timing(self, runtime, *, force=False):
+        """Persist a bounded one-second heartbeat even during silent model IO."""
+        with self.lock:
+            deadline = getattr(runtime, "deadline", None)
+            if runtime.closed or self.closed or self.active != runtime.run_id or deadline is None:
+                return
+            current = deadline.clock()
+            previous = getattr(runtime, "last_timing_at", None)
+            if not force and previous is not None and current - previous < 1:
+                return
+            run = self.store.require("runs", runtime.run_id)
+            if run["status"] not in {"running", "cancelling"} and not force:
+                return
+            runtime.last_timing_at = current
+            self.emit(runtime.run_id, "timing", {"timing": deadline.snapshot()})
+
+    def _timing_snapshot(self, run_id, *, final_status=None):
+        runtime = self.runtime
+        deadline = getattr(runtime, "deadline", None) if runtime and runtime.run_id == run_id else None
+        if deadline is not None:
+            if final_status == "awaiting_input":
+                deadline.pause()
+            elif final_status in TERMINAL:
+                deadline.stop()
+            return deadline.snapshot()
+        with self.store.connect() as db:
+            row = db.execute("SELECT payload_json FROM run_events WHERE run_id=? AND type IN ('timing','completed','error','cancelled','interrupted','awaiting_input') ORDER BY seq DESC", (run_id,))
+            for event in row:
+                timing = json.loads(event["payload_json"]).get("timing")
+                if isinstance(timing, dict):
+                    # A stopped service cannot measure its unobserved tail. Never
+                    # replace monotonic evidence with hours of wall-clock downtime.
+                    if final_status in TERMINAL:
+                        timing = {**timing, "active": False, "current_models": [],
+                                  "interrupted_unknown_tail": final_status == "interrupted"}
+                    return timing
+        return None
 
     def _deadline_exceeded(self, runtime):
         with self.lock:
@@ -513,7 +565,8 @@ class TaskManager:
             db.execute("UPDATE conversations SET updated_at=? WHERE id=?", (now(), run["conversation_id"]))
             self.store.append_event(run_id, report["status"] if final else "artifacts_saved",
                                     {"status": status, "pending_input": pending if final else None,
-                                     "error": report.get("error") if final else None, "final_answer": report.get("final_answer", "")}, conn=db)
+                                     "error": report.get("error") if final else None, "final_answer": report.get("final_answer", ""),
+                                     "timing": self._timing_snapshot(run_id, final_status=status if final else None)}, conn=db)
         if final and report["status"] in TERMINAL:
             self.active = None
             if report["status"] != "completed" and self.runtime:
@@ -529,9 +582,10 @@ class TaskManager:
             if "cleanup_confirmed" not in error:
                 error["cleanup_confirmed"] = self.cleanup_owned(run_id, self.runtime)
             self._recover_exports(run)
+        timing = self._timing_snapshot(run_id, final_status=status)
         with self.store.connect() as db:
             db.execute("UPDATE runs SET status=?,error_json=?,pending_json=NULL,updated_at=? WHERE id=?", (status, encode(error), now(), run_id))
-            self.store.append_event(run_id, status, {"status": status, "error": error}, conn=db)
+            self.store.append_event(run_id, status, {"status": status, "error": error, "timing": timing}, conn=db)
         if self.active == run_id:
             self.active = None
             if self.runtime:
@@ -678,7 +732,12 @@ class TaskManager:
                     continue  # Superseded partial outputs remain in execution history only.
                 meta = json.loads(item["metadata_json"])
                 files = [file_view(dict(f)) | {"name": f["artifact_name"]} for f in db.execute("SELECT f.*,af.name AS artifact_name FROM files f JOIN artifact_files af ON af.file_id=f.id WHERE af.artifact_id=?", (item["id"],))]
-                artifacts.append({k: meta[k] for k in ("kind", "label", "row_count", "columns", "value", "preview") if k in meta} | {"id": item["id"], "files": files})
+                view = {k: meta[k] for k in ("kind", "label", "row_count", "columns", "value", "preview") if k in meta} | {"id": item["id"], "files": files}
+                if meta.get("kind") == "metric":
+                    from labweaver.runtime.presentation import metric_display_fields
+                    view.pop("value", None)
+                    view.update(metric_display_fields(meta.get("value")))
+                artifacts.append(view)
             downloads = [file_view(dict(f)) for f in db.execute("SELECT * FROM files WHERE run_id=? AND category='generated'", (run_id,))
                          if not current_paths or str(managed_path(self.store.root, f["relative_path"])) in current_paths]
             model = db.execute("SELECT selection_json FROM run_models WHERE run_id=?", (run_id,)).fetchone()
@@ -687,7 +746,8 @@ class TaskManager:
             "final_answer": report.get("final_answer", ""), "artifacts": artifacts, "downloads": downloads,
             "task_plan": report.get("task_plan", []), "model_calls": report.get("model_calls", 0),
             "analysis_model_calls": report.get("analysis_model_calls", 0), "events": self.all_events(run_id),
-            "history_run_ids": json.loads(run["context_ids"]), "model_selection": json.loads(model[0]) if model else None}
+            "history_run_ids": json.loads(run["context_ids"]), "model_selection": json.loads(model[0]) if model else None,
+            "timing": self._timing_snapshot(run_id) or report.get("timing")}
 
     def all_events(self, run_id):
         rows, after = [], 0

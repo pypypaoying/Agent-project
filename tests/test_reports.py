@@ -12,7 +12,7 @@ def report(value):
 def test_narrative_metric_is_real_markdown_and_other_metrics_are_retained():
     text = _markdown_brief(report({"report_markdown": "### 实验报告\n\n结果源于真实执行。", "count": 0}))
     assert "### 实验报告\n\n结果源于真实执行。" in text
-    assert '"count": 0' in text
+    assert '| 数量 | 0 |' in text
     assert '"report_markdown"' not in text
 
 
@@ -30,7 +30,7 @@ def test_large_metric_has_bounded_brief_and_full_json_stays_an_artifact():
 
 
 def test_zero_metric_is_not_omitted():
-    assert '\n0\n' in _markdown_brief(report(0))
+    assert '| 结果 | 0 |' in _markdown_brief(report(0))
 
 
 def test_reference_images_and_unsafe_reference_links_are_inert():

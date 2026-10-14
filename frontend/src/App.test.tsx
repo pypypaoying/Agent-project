@@ -127,6 +127,34 @@ describe('real-data chat interface', () => {
     expect(api.blob).not.toHaveBeenCalled();
   });
 
+  it('renders verified answer tables and host metric presentation without default JSON blocks', async () => {
+    await open({ ...withCsv(), runs: [{ id: 'r', status: 'completed', final_answer: '# 数据分析报告\n\n## 核心结果\n\n**样本完整**。\n\n| 指标 | 值 |\n| --- | --- |\n| 样本数 | 25 |', artifacts: [{ id: 'metric', kind: 'metric', label: '数据概况', files: [], value: { raw_count: 25 }, presentation: { blocks: [{ type: 'table', columns: ['指标', '值'], rows: [['原始记录数', '25']] }] } }] }] });
+    const report = screen.getByRole('region', { name: '分析报告正文' });
+    expect(within(report).getByRole('heading', { name: '数据分析报告', level: 1 })).toBeVisible();
+    expect(within(report).getByRole('table')).toHaveTextContent('样本数25');
+    const metric = screen.getByRole('region', { name: '数据概况' });
+    expect(within(metric).getByRole('table')).toHaveTextContent('原始记录数25');
+    expect(metric.querySelector('pre')).toBeNull();
+    expect(within(metric).getByText('查看原始 JSON').closest('details')).not.toHaveAttribute('open');
+  });
+
+  it('shows a recorded terminal duration without inventing elapsed time for old histories', async () => {
+    await open({ ...withCsv(), runs: [{ id: 'old', status: 'completed', final_answer: '旧结果' }, { id: 'new', status: 'completed', final_answer: '新结果', timing: { source: 'host_monotonic', active: false, active_seconds: 62.7, wall_seconds: 120, model_seconds: 38, model_calls: 4, current_models: [] } }] });
+    expect(screen.getByLabelText('任务执行用时')).toHaveTextContent('执行用时 1分 02秒');
+    expect(screen.getAllByLabelText('任务执行用时')).toHaveLength(1);
+  });
+
+  it('shows active model waiting duration but hides timing heartbeats from the execution panel', async () => {
+    const timing = { source: 'host_monotonic', active: true, active_seconds: 12, wall_seconds: 12, model_seconds: 8, model_calls: 2, current_models: [{ role: 'analysis', call: 2, parent_call_id: 'd', elapsed_seconds: 5 }] };
+    const events = [{ version: 1, conversation_id: 'c', run_id: 'r', seq: 1, type: 'timing', payload: { timing } }];
+    await open({ ...withCsv(), runs: [{ id: 'r', status: 'running', timing, events }] });
+    expect(screen.getByText(/代码 Agent · 第 2 次模型请求 · 已等待/)).toHaveTextContent('5秒');
+    await userEvent.click(screen.getByRole('button', { name: '查看执行面板' }));
+    const panel = screen.getByRole('complementary', { name: '执行面板' });
+    expect(within(panel).getByText('模型请求累计')).toBeVisible();
+    expect(panel.querySelector('.event-card')).toBeNull();
+  });
+
   it('reads paged table preview from registered artifact ID', async () => {
     vi.mocked(api.preview).mockResolvedValue({ columns: ['编号'], rows: Array.from({ length: 20 }, (_, index) => [`${index}`]), row_count: 280 });
     await open({ ...withCsv(), runs: [{ id: 'r', status: 'completed', artifacts: [{ id: 'actual-artifact', kind: 'table', label: '完整分组', files: [] }] }] });
@@ -236,6 +264,16 @@ describe('real-data chat interface', () => {
     expect(progress).not.toHaveTextContent('never print entire code here');
   });
 
+  it('folds completed execution details so the report stays prominent while keeping real evidence accessible', async () => {
+    const events = [{ version: 1, conversation_id: 'c', run_id: 'r', seq: 1, type: 'tool_end', payload: { name: 'profile_csv', id: 'p', status: 'completed' } }];
+    await open({ ...withCsv(), runs: [{ id: 'r', status: 'completed', final_answer: '## 主要发现\n\n数据概览已完成。', events }] });
+    const progress = screen.getByRole('region', { name: '真实执行过程' });
+    expect(progress.querySelector('.completed-progress')).not.toHaveAttribute('open');
+    expect(screen.getByRole('heading', { name: '主要发现' })).toBeVisible();
+    await userEvent.click(within(progress).getByText('执行过程与核验记录'));
+    expect(within(progress).getByText('读取 CSV 数据')).toBeVisible();
+  });
+
   it('sends the selected live model on a new task without changing the frozen CSV', async () => {
     vi.mocked(api.health).mockResolvedValue({ mode: 'live' });
     await open({ ...withCsv(), conversation: { id: 'c', title: '问卷分析', frozen: true }, runs: [{ id: 'old', task: '上次任务', status: 'completed' }] });
@@ -286,7 +324,7 @@ describe('real-data chat interface', () => {
     await userEvent.click(screen.getByRole('button', { name: '退出应用' }));
     expect(await screen.findByRole('heading', { name: '应用已退出' })).toBeVisible();
     expect(api.shutdown).toHaveBeenCalledTimes(1);
-    expect(screen.getByText(/重新双击 Analyvia 启动器/)).toBeVisible();
+    expect(screen.getByText(/重新双击 AnaliyMaster 启动器/)).toBeVisible();
     expect(screen.queryByRole('textbox', { name: '任务说明' })).not.toBeInTheDocument();
   });
 

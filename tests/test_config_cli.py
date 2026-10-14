@@ -44,6 +44,12 @@ def test_config_requires_explicit_model(tmp_path, monkeypatch):
         load_config()
 
 
+def test_default_model_output_budget_supports_structured_reports(monkeypatch):
+    import langchain_openai
+    monkeypatch.setattr(langchain_openai, "ChatOpenAI", lambda **options: options)
+    assert create_model(ModelConfig("model", "https://example.invalid", "private-test-placeholder"))["max_tokens"] == 4096
+
+
 def test_config_reads_selected_file_without_mutating_environment(tmp_path, monkeypatch):
     env = tmp_path / "settings.env"
     env.write_text(
@@ -238,7 +244,7 @@ def test_cli_version_stays_available(capsys):
     with pytest.raises(SystemExit) as caught:
         main(["--version"])
     assert caught.value.code == 0
-    assert capsys.readouterr().out.strip() == "Analyvia 0.2.0"
+    assert capsys.readouterr().out.strip() == "AnaliyMaster 0.2.0"
 
 
 def test_cli_can_run_intake_with_only_configuration(tmp_path, monkeypatch, capsys):

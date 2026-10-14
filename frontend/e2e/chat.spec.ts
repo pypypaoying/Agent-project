@@ -158,6 +158,7 @@ test('CSV overview is genuinely profiled, streamed, persisted and downloadable',
   await send(page, '概览这个 CSV，不需要统计或图表');
   await expect(page.getByText('已完成', { exact: true })).toBeVisible({ timeout: 60_000 });
   await expect(page.getByText(/已读取完整 CSV：2 行/)).toBeVisible();
+  await page.getByRole('region', { name: '真实执行过程' }).locator('.completed-progress > summary').click();
   await expect(page.getByRole('region', { name: '真实执行过程' }).getByText('读取 CSV 数据')).toBeVisible();
   const run = await latestRun(page);
   expect(run.events.some((event: { type: string; payload: { name?: string } }) => event.type === 'tool_end' && event.payload.name === 'profile_csv')).toBe(true);
@@ -222,12 +223,17 @@ for (const example of [
     await send(page, example.task);
     await expect(page.getByText('已完成', { exact: true })).toBeVisible({ timeout: 90_000 });
     const progress = page.getByRole('region', { name: '真实执行过程' });
+    const completed = progress.locator('.completed-progress');
+    if (await completed.count()) await completed.locator(':scope > summary').click();
     const earlier = progress.locator('.older-progress');
     if (await earlier.count() && !await progress.getByText('代码 Agent · 第 1 次 Python 执行').isVisible()) await earlier.locator('summary').click();
     await expect(progress.getByText('代码 Agent · 第 1 次 Python 执行')).toBeVisible();
     await expect(page.locator('table').first()).toBeVisible();
     if (example.expected) await expect(page.locator('img.chart')).toBeVisible();
     const run = await latestRun(page);
+    await expect(page.getByLabel('任务执行用时')).toBeVisible();
+    expect(run.timing.active_seconds).toBeGreaterThanOrEqual(0);
+    expect(run.timing.active).toBe(false);
     const table = run.artifacts.find((artifact: { kind: string }) => artifact.kind === 'table');
     const preview = await page.request.get(`/api/v1/artifacts/${table.id}/preview?limit=20`, { headers: { Authorization: `Bearer ${token}` } });
     const actual = await preview.json();
@@ -238,6 +244,9 @@ for (const example of [
       expect(actual.columns).toEqual(['日期', '数量']);
       expect(actual.rows).toEqual([['2026-12-01', '5'], ['2026-12-02', '4'], ['2026-12-03', '3']]);
       expect(run.artifacts.find((artifact: { kind: string }) => artifact.kind === 'metric').value).toMatchObject({ 峰值: 5, 谷值: 3, 差值: 2 });
+      const summary = page.locator('.artifact-card').filter({ has: page.getByRole('cell', { name: '峰值', exact: true }) });
+      await expect(summary.getByRole('table')).toContainText('峰值5');
+      await expect(summary.locator('pre')).toHaveCount(0);
     } else {
       expect(actual.row_count).toBe(3);
       expect(actual.rows).toEqual([['001', '2', 'A', '4'], ['002', '0', 'B', '0'], ['003', '4', 'A', '8']]);
