@@ -281,8 +281,9 @@ def inject_executor(session, monkeypatch, *, failures=0, empty=False):
     return calls
 
 
+@pytest.mark.parametrize("needs_format_repair", [False, True])
 def test_premature_final_receives_one_feedback_then_real_execution(
-    csv_path, monkeypatch
+    csv_path, monkeypatch, needs_format_repair
 ):
     model = ScriptedModel(
         responses=[
@@ -294,6 +295,7 @@ def test_premature_final_receives_one_feedback_then_real_execution(
                 "delegate",
                 {"instruction": "统计各组", "deliverable_ids": ["table"]},
             ),
+            *([AIMessage(content="真实成果已计算，但此次回答忘记 JSON 包装。")] if needs_format_repair else []),
             answer("calculation"),
         ]
     )
@@ -301,8 +303,8 @@ def test_premature_final_receives_one_feedback_then_real_execution(
     calls = inject_executor(session, monkeypatch)
     report = session.invoke("统计各组")
     assert report["status"] == "completed", report.get("error")
-    assert len(report["completion_feedback"]) == 1 and len(calls) == 1
-    assert report["model_calls"] == 5 and not report["replies"]
+    assert len(report["completion_feedback"]) == 1 + needs_format_repair and len(calls) == 1
+    assert report["model_calls"] == 5 + needs_format_repair and not report["replies"]
     paired(report)
 
 

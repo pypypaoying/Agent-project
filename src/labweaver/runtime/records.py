@@ -56,6 +56,18 @@ def _markdown_brief(report):
             else "未完成"
         )
         lines.append(f"- {_report_markdown(delivery['description'])}（{marker}）")
+    lines.extend(["", "## 核验覆盖", ""])
+    verification=report.get("verification") or []
+    if not verification:
+        lines.append("未核验：此记录没有独立数值检查证据。")
+    else:
+        labels={"passed":"通过","failed":"失败","not_applicable":"不适用","not_checked":"未检查"}
+        lines.extend(["| 检查 | 状态 | 依据与边界 |","| --- | --- | --- |"])
+        for group in verification:
+            for item in group.get("results",[]):
+                cells=[item["check"],labels.get(item["status"],item["status"]),item["reason"]]
+                lines.append("| "+" | ".join(_report_markdown(str(c)).replace("|","\\|").replace("\n"," ") for c in cells)+" |")
+        lines.extend(["","核验通过仅覆盖列出的检查，不证明全部方法、训练无泄漏或解释正确。"])
     if report.get("artifacts"):
         lines.extend(["", "## 数据结果与图表", ""])
     for artifact in report.get("artifacts", []):
@@ -112,8 +124,8 @@ def save_run(report, output_dir="runs", *, artifact_assets=None, with_brief=True
     """Write only registered current-task assets. Roll back all created files on failure."""
     assets = artifact_assets or {}
     output = copy.deepcopy(report)
-    if output.get("report_version") != 2:
-        raise ValueError("Only D5 report version 2 may be exported by this runtime")
+    if output.get("report_version") not in {2, 3}:
+        raise ValueError("Only report versions 2 and 3 may be exported by this runtime")
     folder = Path(output_dir)
     for key in ("session_id", "task_id"):
         value = output.get(key)

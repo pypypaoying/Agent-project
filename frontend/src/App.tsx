@@ -6,6 +6,7 @@ import { ConversationDialog, ConversationRow, type ConversationAction } from './
 import { BRAND_NAME, BrandMark } from './brand';
 import { Markdown, MetricOutput } from './report';
 import { formatDuration, useRunTiming } from './timing';
+import { Verification } from './verification';
 import type { Artifact, Conversation, ConversationDetail, ManagedFile, Message, ModelSelection, ProviderCatalog, Run, RunEvent, RunStatus, TablePreview } from './types';
 
 const activeStatuses: RunStatus[] = ['running', 'awaiting_input', 'cancelling'];
@@ -139,20 +140,21 @@ function RunCard({ run, liveAnswer, messages, events, onError, onRerun }: { run:
       {Boolean(run.error) && <p className="run-error">{text(run.error)}</p>}
       {run.status === 'interrupted' && <div className="interrupted-note"><p>服务重启前的执行已中断。历史结果仍可查看；原中断节点不能恢复。</p><button onClick={() => onRerun(run.task ?? '')}>按原任务重新执行</button></div>}
       {(run.artifacts ?? []).map(artifact => <ArtifactCard key={artifact.id} artifact={artifact} onError={onError} />)}
+      {!provisional && <Verification run={run} />}
       {!!run.downloads?.length && <details className="all-files"><summary>报告、代码与全部文件（{run.downloads.length}）</summary>{run.downloads.map(file => <button className="file-download" key={file.id} onClick={() => void downloadFile(file).catch(error => onError(error.message))}><Icon name="file" /><span>{file.name}</span><Icon name="download" /></button>)}</details>}
     </div>
   </article>;
 }
 
 function ExecutionPanel({ events, run, onClose, onError }: { events: RunEvent[]; run?: Run; onClose: () => void; onError: (message: string) => void }) {
-  const names: Record<string, string> = { running: '任务运行', completed: '交付完成', error: '执行未完成', cancelled: '任务停止', interrupted: '运行中断', cancelling: '正在停止', artifacts_saved: '已保存部分成果', container_lifecycle: '沙箱生命周期', plan: '任务计划', tool_start: '工具开始', tool_end: '工具结束', model_start: '模型请求开始', model_end: '模型请求结果', model_retry: '模型响应修正', execution_start: '执行 Python', execution_end: '执行结果', retrieval_result: '资料检索', material_search: '资料检索', completion_feedback: '结果核验', saving: '保存成果', validated: '执行证据核验', awaiting_input: '等待用户回复' };
+  const names: Record<string, string> = { running: '任务运行', completed: '交付完成', error: '执行未完成', cancelled: '任务停止', interrupted: '运行中断', cancelling: '正在停止', artifacts_saved: '已保存部分成果', container_lifecycle: '沙箱生命周期', plan: '任务计划', tool_start: '工具开始', tool_end: '工具结束', model_start: '模型请求开始', model_end: '模型请求结果', model_retry: '模型响应修正', execution_start: '执行 Python', execution_end: '执行结果', verification_start: '独立核对结果', verification_end: '核验明细', retrieval_result: '资料检索', material_search: '资料检索', completion_feedback: '结果核验', saving: '保存成果', validated: '执行证据核验', awaiting_input: '等待用户回复' };
   const timing = useRunTiming(run ?? { id: '', status: 'completed' }, events);
   const detailEvents = events.filter(event => event.type !== 'answer_delta' && event.type !== 'timing');
   return <aside className="execution-panel" aria-label="执行面板"><header><strong>执行与成果</strong><button className="icon-button" aria-label="关闭执行面板" onClick={onClose}><Icon name="close" /></button></header>
     {run && <div className={`panel-state status-${run.status}`}>{labels[run.status]}</div>}
     {timing.available && <dl className="panel-timing"><div><dt>任务执行用时</dt><dd>{formatDuration(timing.activeSeconds)}</dd></div><div><dt>模型请求累计</dt><dd>{formatDuration(timing.modelSeconds)} · {timing.modelCalls} 次</dd></div></dl>}
     {!detailEvents.length && <p className="muted panel-empty">任务开始后，这里显示真实计划、工具执行、代码与来源。</p>}
-    <div className="event-list">{detailEvents.map(event => <details key={event.seq} className="event-card" open={event.type === 'plan' || event.type === 'retrieval_result' || event.type === 'execution_end' && event.payload.status === 'error'}><summary><span className="event-index">{event.seq}</span><span>{names[event.type] ?? event.type}</span>{typeof event.payload.name === 'string' ? <small>{event.payload.name}</small> : Boolean(event.payload.role) && <small>{event.payload.role === 'analysis' ? '代码 Agent' : '主 Agent'}</small>}</summary>
+    <div className="event-list">{detailEvents.map(event => <details key={event.seq} className="event-card" open={event.type === 'plan' || event.type === 'retrieval_result' || event.type === 'execution_end' && event.payload.status === 'error'}><summary><span className="event-index">{event.seq}</span><span>{names[event.type] ?? event.type}</span>{typeof event.payload.name === 'string' ? <small>{event.payload.name}</small> : Boolean(event.payload.role) && <small>{event.payload.role === 'analysis' ? '代码 Agent' : event.payload.role === 'host' ? '宿主程序' : '主 Agent'}</small>}</summary>
       {typeof event.payload.code === 'string' && <pre className="code-block"><code>{event.payload.code}</code></pre>}
       {(event.type === 'retrieval_result' || event.type === 'material_search') && Array.isArray(event.payload.matches) && <div className="source-list"><p className="muted">检索：{text(event.payload.query)}</p>{event.payload.matches.length === 0 ? <p>当前查询没有匹配资料。</p> : event.payload.matches.map((raw, index) => { const match = raw as Record<string, unknown>; const location = match.location as Record<string, unknown> | undefined;
         return <blockquote key={index}><strong>[{text(match.id)}] {text(match.name)}</strong><small>{location?.page ? `第 ${text(location.page)} 页` : location?.line_start ? `第 ${text(location.line_start)}–${text(location.line_end)} 行` : ''}</small><p>{text(match.text)}</p></blockquote>;

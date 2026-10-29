@@ -1,0 +1,248 @@
+{
+  "baseline": {
+    "runs": 48,
+    "attained": 31,
+    "attainment_rate": 0.6458333333333334,
+    "first_attempt_attained": 9,
+    "delivery_complete": 27,
+    "execution_failure_runs": 13,
+    "repaired_and_attained": 7,
+    "median_seconds": 16.9375,
+    "p95_seconds": 30.046,
+    "failures": {
+      "status:awaiting_input": 5,
+      "metric:variance": 3,
+      "metric:geometric_mean": 2,
+      "expected_full_table_not_found": 6,
+      "status:error": 7
+    },
+    "by_case": {
+      "A1": {
+        "runs": 3,
+        "attained": 3
+      },
+      "A2": {
+        "runs": 3,
+        "attained": 3
+      },
+      "A3": {
+        "runs": 3,
+        "attained": 3
+      },
+      "A4": {
+        "runs": 3,
+        "attained": 3
+      },
+      "A5": {
+        "runs": 3,
+        "attained": 3
+      },
+      "A6": {
+        "runs": 3,
+        "attained": 3
+      },
+      "A7": {
+        "runs": 3,
+        "attained": 0
+      },
+      "A8": {
+        "runs": 3,
+        "attained": 1
+      },
+      "C1": {
+        "runs": 3,
+        "attained": 0
+      },
+      "C2": {
+        "runs": 3,
+        "attained": 0
+      },
+      "C3": {
+        "runs": 3,
+        "attained": 0
+      },
+      "C4": {
+        "runs": 3,
+        "attained": 3
+      },
+      "C5": {
+        "runs": 3,
+        "attained": 3
+      },
+      "C6": {
+        "runs": 3,
+        "attained": 0
+      },
+      "C7": {
+        "runs": 3,
+        "attained": 3
+      },
+      "C8": {
+        "runs": 3,
+        "attained": 3
+      }
+    },
+    "usage_unknown_runs": 48,
+    "usage_call_count_unmeasured_runs": 0,
+    "known_total_tokens": 0,
+    "unknown_usage_calls": 304
+  },
+  "candidate": {
+    "runs": 72,
+    "attained": 59,
+    "attainment_rate": 0.8194444444444444,
+    "first_attempt_attained": 9,
+    "delivery_complete": 56,
+    "execution_failure_runs": 30,
+    "repaired_and_attained": 28,
+    "median_seconds": 19.640500000000003,
+    "p95_seconds": 104.734,
+    "failures": {
+      "status:awaiting_input": 2,
+      "metric:geometric_mean": 2,
+      "expected_full_table_not_found": 4,
+      "status:error": 7,
+      "missing_retrieval": 1
+    },
+    "by_case": {
+      "A1": {
+        "runs": 3,
+        "attained": 3
+      },
+      "A2": {
+        "runs": 3,
+        "attained": 3
+      },
+      "A3": {
+        "runs": 3,
+        "attained": 3
+      },
+      "A4": {
+        "runs": 3,
+        "attained": 3
+      },
+      "A5": {
+        "runs": 3,
+        "attained": 3
+      },
+      "A6": {
+        "runs": 3,
+        "attained": 3
+      },
+      "A7": {
+        "runs": 3,
+        "attained": 3
+      },
+      "A8": {
+        "runs": 3,
+        "attained": 1
+      },
+      "C1": {
+        "runs": 3,
+        "attained": 0
+      },
+      "C2": {
+        "runs": 3,
+        "attained": 0
+      },
+      "C3": {
+        "runs": 3,
+        "attained": 1
+      },
+      "C4": {
+        "runs": 3,
+        "attained": 3
+      },
+      "C5": {
+        "runs": 3,
+        "attained": 2
+      },
+      "C6": {
+        "runs": 3,
+        "attained": 2
+      },
+      "C7": {
+        "runs": 3,
+        "attained": 2
+      },
+      "C8": {
+        "runs": 3,
+        "attained": 3
+      },
+      "M1": {
+        "runs": 3,
+        "attained": 3
+      },
+      "M2": {
+        "runs": 3,
+        "attained": 3
+      },
+      "M3": {
+        "runs": 3,
+        "attained": 3
+      },
+      "M4": {
+        "runs": 3,
+        "attained": 3
+      },
+      "M5": {
+        "runs": 3,
+        "attained": 3
+      },
+      "M6": {
+        "runs": 3,
+        "attained": 3
+      },
+      "M7": {
+        "runs": 3,
+        "attained": 3
+      },
+      "M8": {
+        "runs": 3,
+        "attained": 3
+      }
+    },
+    "usage_unknown_runs": 0,
+    "usage_call_count_unmeasured_runs": 0,
+    "known_total_tokens": 3851273,
+    "unknown_usage_calls": 0
+  },
+  "common": {
+    "baseline_attained": 31,
+    "baseline_runs": 48,
+    "candidate_attained": 35,
+    "candidate_runs": 48
+  },
+  "core_modeling_successes": {
+    "M1": 3,
+    "M2": 3,
+    "M3": 3
+  },
+  "modeling_runs": 24,
+  "batch_identity": {
+    "baseline": {
+      "suite_version": null,
+      "suite_sha256": [
+        "38a53a7952a5eed43986fe638988ecd8d7dc87ebceac9784345ffc2461d96603"
+      ],
+      "implementation_sha256": [],
+      "unique_trial_ids": true,
+      "consistent_snapshot": true,
+      "complete_repetitions": true
+    },
+    "candidate": {
+      "suite_version": 2,
+      "suite_sha256": [
+        "445319d9472dcfd216889ca29b130b9758f2e0cc678795f9457bb042b002db4a"
+      ],
+      "implementation_sha256": [
+        "77ceeceee33b665a390dd59db9117b4997a76bb54c1da3567bc8276939dc2915"
+      ],
+      "unique_trial_ids": true,
+      "consistent_snapshot": true,
+      "complete_repetitions": true
+    }
+  },
+  "numeric_release_gate": true,
+  "note": "Numeric gate only; tests, fault rejection, visual acceptance and CI must pass separately. All attempts retained."
+}

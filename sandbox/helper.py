@@ -32,6 +32,7 @@ def load_dataset():
         payload["rows"], columns=[c["id"] for c in payload["columns"]], dtype=object
     )
     frame.attrs["columns"] = payload["columns"]
+    frame.attrs["record_ids"] = payload.get("record_ids", [f"r{i:06d}" for i in range(1, len(frame) + 1)])
     return frame
 
 

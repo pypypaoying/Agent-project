@@ -398,6 +398,9 @@ def load_csv_snapshot(
             "position": position,
             "name": name,
             "inferred_type": inferred_type,
+            # One column's set at a time bounds extra memory to <= row_count.
+            # Count original nonblank strings, not normalized numeric values.
+            "distinct_count": len({row[position-1] for row in parsed_rows if row[position-1].strip()}),
             "missing_count": accumulator["missing"],
             "missing_ratio": accumulator["missing"] / row_count if row_count else None,
             "numeric_summary": summary,

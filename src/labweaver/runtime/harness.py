@@ -25,6 +25,7 @@ class ExecutionHarness(AgentMiddleware):
         model_limit=12,
         model_counter=None,
         reject_invalid=True,
+        repairable_invalid=(),
         cancellation_event=None,
         progress=None,
         role="main",
@@ -35,6 +36,7 @@ class ExecutionHarness(AgentMiddleware):
         self.model_limit = model_limit
         self.model_counter = model_counter
         self.reject_invalid = reject_invalid
+        self.repairable_invalid = frozenset(repairable_invalid)
         self.cancellation_event = cancellation_event
         self.progress = progress or (lambda event: None)
         self.role = role
@@ -54,6 +56,7 @@ class ExecutionHarness(AgentMiddleware):
         self._admitted, self._cached, self._advertised = {}, {}, set()
         self.failure = None
         self.model_diagnostics = []
+        self.token_usage = []
 
     def wrap_model_call(self, request, handler):
         # A truncated JSON/tool response is not executable evidence. One bounded
@@ -125,8 +128,12 @@ class ExecutionHarness(AgentMiddleware):
         # Only normalized metadata leaves the model boundary, never raw content,
         # SDK errors, tool arguments, reasoning, or authentication information.
         reason = next((v for v in reasons if v in {"length", "stop", "tool_calls", "content_filter"}), None)
+        usages = [getattr(m,"usage_metadata",None) for m in response.result]
+        known = [u for u in usages if isinstance(u,dict) and all(type(u.get(k)) is int and u[k]>=0 for k in ("input_tokens","output_tokens","total_tokens"))]
+        usage = {k:sum(u[k] for u in known) for k in ("input_tokens","output_tokens","total_tokens")} if known and len(known)==len(usages) else None
+        self.token_usage.append({"call":call,"role":self.role,"usage":usage})
         self.progress({"type": "model_end", "role": self.role, "call": call,
-                       "status": "completed", "finish_reason": reason,
+                       "status": "completed", "finish_reason": reason, "usage": usage,
                        "elapsed_seconds": round(time.monotonic() - start, 3)})
         self.check_cancelled()
         return response
@@ -184,10 +191,22 @@ class ExecutionHarness(AgentMiddleware):
             response = handler(request)
             if isinstance(response, ToolMessage):
                 if cid not in self._cached:
+                    issues = []
+                    schema = getattr(getattr(request, "tool", None), "args_schema", None)
+                    if name in self.repairable_invalid and hasattr(schema, "model_validate"):
+                        from pydantic import ValidationError
+                        try:
+                            schema.model_validate(call.get("args", {}))
+                        except ValidationError as exc:
+                            # Never echo raw SDK errors, input values or validator context.
+                            issues = [{"location": list(e["loc"]), "type": e["type"], "message": e["msg"][:500]}
+                                      for e in exc.errors(include_input=False, include_context=False, include_url=False)[:10]]
                     self.record(
                         {
                             "status": "error",
                             "error": {"code": "invalid_tool_arguments"},
+                            **({"argument_errors": issues,
+                                "repair_instruction": "按工具 JSON schema 修正字段位置和类型，重新提交完整参数；本次未执行工具，仍计入原预算。"} if issues else {}),
                         },
                         name,
                     )
@@ -196,7 +215,7 @@ class ExecutionHarness(AgentMiddleware):
                         name=name,
                         tool_call_id=cid,
                     )
-                    if self.reject_invalid:
+                    if self.reject_invalid and not issues:
                         self.failure = "invalid_tool_arguments"
                 self.events.extend(_trace_messages([response]))
             return response

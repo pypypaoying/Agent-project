@@ -145,7 +145,7 @@ class TaskManager:
                       extra={"cleanup_confirmed": cleaned})
 
     def emit(self, run_id, kind, payload):
-        role = "analysis_agent" if kind in {"execution_start", "execution_end"} else "host" if kind in {"container_lifecycle", "runtime_identity", "saving", "artifacts_saved", "timing"} else "main_agent"
+        role = "analysis_agent" if kind in {"execution_start", "execution_end"} else "host" if kind in {"container_lifecycle", "runtime_identity", "saving", "artifacts_saved", "timing", "verification_start", "verification_end"} else "main_agent"
         return self.store.append_event(run_id, kind, scrub({"role": role, **payload}, self.secrets))
 
     def health(self, *, refresh=False):
@@ -690,7 +690,7 @@ class TaskManager:
                 if len(raw) > 16 * 1024 * 1024:
                     continue
                 report = strict_json(raw)
-                if not isinstance(report, dict) or report.get("report_version") != 2 or report.get("session_id") != run["core_session_id"] or report.get("task_id") != run["core_task_id"]:
+                if not isinstance(report, dict) or report.get("report_version") not in {2,3} or report.get("session_id") != run["core_session_id"] or report.get("task_id") != run["core_task_id"]:
                     continue
                 if contains_secret(report, self.secrets):
                     continue
@@ -745,6 +745,7 @@ class TaskManager:
             "error": json.loads(run["error_json"] or "null"), "pending_input": json.loads(run["pending_json"] or "null"),
             "final_answer": report.get("final_answer", ""), "artifacts": artifacts, "downloads": downloads,
             "task_plan": report.get("task_plan", []), "model_calls": report.get("model_calls", 0),
+            "task_spec":report.get("task_spec"), "verification":report.get("verification",[]), "token_usage":report.get("token_usage"),
             "analysis_model_calls": report.get("analysis_model_calls", 0), "events": self.all_events(run_id),
             "history_run_ids": json.loads(run["context_ids"]), "model_selection": json.loads(model[0]) if model else None,
             "timing": self._timing_snapshot(run_id) or report.get("timing")}

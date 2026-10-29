@@ -133,7 +133,7 @@ def test_direct_runner_uses_working_directory_config_offline(
         hashlib.sha256(path.read_bytes()).hexdigest() == digest
         for path, digest in material_hashes.items()
     )
-    assert report["record_path"] and report["report_version"] == 2
+    assert report["record_path"] and report["report_version"] == 3
     assert credential_reads == []
     assert network_attempts == []
     json.dumps(report, ensure_ascii=False, allow_nan=False)

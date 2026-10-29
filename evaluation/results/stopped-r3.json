@@ -1,0 +1,102 @@
+{
+  "batch_status": {
+    "status": "stopped_between_trials",
+    "reason": "Plan admission needs two schema corrections within fixed total model budget; this is a partial development batch, not release acceptance.",
+    "runs": 17,
+    "attained": 10
+  },
+  "results": {
+    "runs": 17,
+    "attained": 10,
+    "attainment_rate": 0.5882352941176471,
+    "first_attempt_attained": 0,
+    "delivery_complete": 11,
+    "execution_failure_runs": 10,
+    "repaired_and_attained": 6,
+    "median_seconds": 28.109,
+    "p95_seconds": 120.547,
+    "failures": {
+      "status:awaiting_input": 4,
+      "metric:median": 1,
+      "metric:geometric_mean": 1,
+      "expected_full_table_not_found": 1,
+      "invalid_modeling_deliverables": 1,
+      "missing_modeling_contract": 1,
+      "status:error": 2
+    },
+    "by_case": {
+      "A1": {
+        "runs": 1,
+        "attained": 1
+      },
+      "A2": {
+        "runs": 1,
+        "attained": 1
+      },
+      "A3": {
+        "runs": 1,
+        "attained": 1
+      },
+      "A4": {
+        "runs": 1,
+        "attained": 1
+      },
+      "A5": {
+        "runs": 1,
+        "attained": 1
+      },
+      "A6": {
+        "runs": 1,
+        "attained": 0
+      },
+      "A7": {
+        "runs": 1,
+        "attained": 1
+      },
+      "A8": {
+        "runs": 1,
+        "attained": 0
+      },
+      "C1": {
+        "runs": 1,
+        "attained": 0
+      },
+      "M1": {
+        "runs": 1,
+        "attained": 1
+      },
+      "M2": {
+        "runs": 1,
+        "attained": 0
+      },
+      "M3": {
+        "runs": 1,
+        "attained": 0
+      },
+      "M4": {
+        "runs": 1,
+        "attained": 0
+      },
+      "M5": {
+        "runs": 1,
+        "attained": 1
+      },
+      "M6": {
+        "runs": 1,
+        "attained": 1
+      },
+      "M7": {
+        "runs": 1,
+        "attained": 1
+      },
+      "M8": {
+        "runs": 1,
+        "attained": 0
+      }
+    },
+    "usage_unknown_runs": 0,
+    "usage_call_count_unmeasured_runs": 0,
+    "known_total_tokens": 1194376,
+    "unknown_usage_calls": 0
+  }
+}

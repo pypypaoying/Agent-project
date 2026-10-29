@@ -1,0 +1,129 @@
+{
+  "batch_status": {
+    "status": "stopped",
+    "reason": "Regression stratified raw continuous target admitted; known development defect requires admission validation. Do not treat this partial batch as a complete release evaluation.",
+    "runs": 25,
+    "attained": 17
+  },
+  "results": {
+    "runs": 25,
+    "attained": 17,
+    "attainment_rate": 0.68,
+    "first_attempt_attained": 3,
+    "delivery_complete": 15,
+    "execution_failure_runs": 12,
+    "repaired_and_attained": 9,
+    "median_seconds": 22.336,
+    "p95_seconds": 112.531,
+    "failures": {
+      "batch_stopped_for_contract_fix": 1,
+      "status:awaiting_input": 3,
+      "metric:median": 1,
+      "metric:geometric_mean": 1,
+      "expected_full_table_not_found": 1,
+      "status:error": 3,
+      "invalid_modeling_deliverables": 1
+    },
+    "by_case": {
+      "A1": {
+        "runs": 2,
+        "attained": 1
+      },
+      "A2": {
+        "runs": 1,
+        "attained": 1
+      },
+      "A3": {
+        "runs": 1,
+        "attained": 1
+      },
+      "A4": {
+        "runs": 1,
+        "attained": 1
+      },
+      "A5": {
+        "runs": 1,
+        "attained": 1
+      },
+      "A6": {
+        "runs": 1,
+        "attained": 0
+      },
+      "A7": {
+        "runs": 1,
+        "attained": 1
+      },
+      "A8": {
+        "runs": 1,
+        "attained": 0
+      },
+      "C1": {
+        "runs": 1,
+        "attained": 0
+      },
+      "C2": {
+        "runs": 1,
+        "attained": 0
+      },
+      "C3": {
+        "runs": 1,
+        "attained": 0
+      },
+      "C4": {
+        "runs": 1,
+        "attained": 1
+      },
+      "C5": {
+        "runs": 1,
+        "attained": 1
+      },
+      "C6": {
+        "runs": 1,
+        "attained": 1
+      },
+      "C7": {
+        "runs": 1,
+        "attained": 1
+      },
+      "C8": {
+        "runs": 1,
+        "attained": 1
+      },
+      "M1": {
+        "runs": 1,
+        "attained": 1
+      },
+      "M2": {
+        "runs": 1,
+        "attained": 0
+      },
+      "M3": {
+        "runs": 1,
+        "attained": 0
+      },
+      "M4": {
+        "runs": 1,
+        "attained": 1
+      },
+      "M5": {
+        "runs": 1,
+        "attained": 1
+      },
+      "M6": {
+        "runs": 1,
+        "attained": 1
+      },
+      "M7": {
+        "runs": 1,
+        "attained": 1
+      },
+      "M8": {
+        "runs": 1,
+        "attained": 1
+      }
+    },
+    "usage_unknown_runs": 1,
+    "known_total_tokens": 1522001,
+    "unknown_usage_calls": 0
+  }
+}

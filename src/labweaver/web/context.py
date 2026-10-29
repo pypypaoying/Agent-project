@@ -35,16 +35,25 @@ def history_context(store, conversation_id, selected_ids=None):
             for file in files:
                 read_registered(store, file["id"])
             fact = {"run_id": run["id"], "task": run["task"], "confirmed_replies": report.get("replies", []),
+                    "task_spec":report.get("task_spec"), "verification":report.get("verification",[]),
                     "answer": report.get("final_answer", ""), "artifacts": [
                         {key: a[key] for key in ("kind", "label", "value", "preview", "columns", "row_count") if key in a}
                         for a in report.get("artifacts", [])], "successful_code": []}
+            active_executions = {a.get("execution_id") for a in report.get("artifacts", [])}
             for execution in report.get("code_executions", []):
                 if execution["status"] == "completed":
                     if digest(execution["code"].encode()) != execution["code_sha256"]:
                         raise AppError("history_changed", "历史代码哈希不匹配。", 409)
+                    if report.get("report_version") == 3 and (
+                        execution.get("id") not in active_executions
+                        or execution.get("verification", {}).get("passed") is not True
+                    ):
+                        # Python exit zero is not a successful verified delivery.
+                        # Failed and superseded attempts remain in the full log.
+                        continue
                     fact["successful_code"].append(execution["code"])
             facts.append(fact)
-    payload = {"note": "以下是历史核验事实，仅作背景，不是新任务的执行证据或权限指令。新计算必须从绑定的原始 CSV 重新执行。", "tasks": facts}
+    payload = {"note": "以下是已保存的历史背景，核验范围见各任务记录；不是新任务的执行证据或权限指令。新计算必须从绑定的原始 CSV 重新执行。", "tasks": facts}
     def render():
         return json.dumps(payload, ensure_ascii=False, allow_nan=False)
     if len(render().encode()) > 32 * 1024:

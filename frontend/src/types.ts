@@ -25,7 +25,14 @@ export interface Run {
   events?: RunEvent[]; created_at?: string; context_run_ids?: string[];
   model_selection?: ModelSelection & { provider_name?: string; base_url?: string };
   timing?: unknown;
+  model_calls?: number;
+  analysis_model_calls?: number;
+  task_spec?: {goal?: string; data_scope?: string; assumptions?: string[]; modeling?: {target: string; features: string[]; split: string; seed: number; test_size: number}} | null;
+  verification?: VerificationGroup[];
+  token_usage?: {main: TokenCall[]; analysis: TokenCall[]} | null;
 }
+export interface TokenCall {call: number; role: string; usage: {input_tokens: number; output_tokens: number; total_tokens: number} | null}
+export interface VerificationGroup {execution_id?: string; passed: boolean; boundary?: string; results: {check: string; status: 'passed'|'failed'|'not_applicable'|'not_checked'; required: boolean; reason: string; evidence?: Record<string,unknown>}[]}
 export interface Message { id: string; role: string; content: string; state?: string; run_id?: string; question_id?: string; }
 export interface ConversationDetail { conversation: Conversation; files: ManagedFile[]; messages: Message[]; runs: Run[]; model_selection?: ModelSelection; }
 export interface ModelSelection { provider_id: string; model_id: string; }

@@ -18,7 +18,7 @@ from labweaver.runtime.artifacts import strict_json, validate_payload
 
 @dataclass(frozen=True)
 class ExecutionConfig:
-    image: str = "labweaver-python:0.2.0"
+    image: str = "labweaver-python:0.3.0"
     timeout: float = 60
     memory: str = "1g"
     cpus: float = 2
@@ -73,6 +73,7 @@ def snapshot_payload(snapshot):
             for i, name in enumerate(snapshot.headers, 1)
         ],
         "rows": snapshot.rows,
+        "record_ids": [f"r{i:06d}" for i in range(1, len(snapshot.rows) + 1)],
     }
 
 
@@ -183,7 +184,7 @@ class DockerExecutor:
             if image.returncode:
                 raise ExecutionError(
                     "sandbox_image_missing",
-                    "Build the locked sandbox image: docker build -t labweaver-python:0.2.0 sandbox",
+                    "Build the locked sandbox image: docker build -t labweaver-python:0.3.0 sandbox",
                 )
             image_id = image.stdout.decode().strip()
             if not image_id.startswith("sha256:") or len(image_id) != 71:
@@ -300,6 +301,7 @@ class DockerExecutor:
         *,
         remaining_bytes=50 * 1024 * 1024,
         remaining_figures=2,
+        verification_input=None,
     ):
         start = time.monotonic()
         invalid_code = not isinstance(code, str)
@@ -344,6 +346,10 @@ class DockerExecutor:
                     encoding="utf-8",
                 )
                 (input_dir / "analysis.py").write_text(code, encoding="utf-8")
+                if verification_input is not None:
+                    (input_dir / "verification.json").write_text(
+                        json.dumps(verification_input, ensure_ascii=False, allow_nan=False), encoding="utf-8"
+                    )
                 # Both mounted files contain selected data/code only, never environment variables.
                 with self._lock:
                     if self.is_cancelled():
@@ -440,6 +446,8 @@ class DockerExecutor:
                     record.update(
                         {k: payload[k] for k in ("exit_code", "stdout", "stderr")}
                     )
+                    record["resource_usage"] = payload.get("resource_usage")
+                    record["python_elapsed_seconds"] = payload.get("elapsed_seconds")
                     if payload["exit_code"] != 0:
                         raise ExecutionError(
                             "python_failed",

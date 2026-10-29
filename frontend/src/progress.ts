@@ -62,6 +62,9 @@ export function summarizeProgress(events: RunEvent[], active: boolean, awaitingI
           if (retry) { update({ ...retry, state: outcome.state, status: truncated ? '仍被截断' : outcome.status }); pendingRetries.delete(scope); }
         }
       }
+    } else if (event.type === 'verification_start' || event.type === 'verification_end') {
+      const verification=payload.verification as {passed?: boolean} | undefined;
+      update({id:`verify:${String(payload.execution_id)}`,title:'独立核对结果',...(event.type==='verification_start' ? started : resultState(verification?.passed ? 'completed':'error')),detail:event.type==='verification_end' ? '核验覆盖与未检查项见报告明细' : undefined});
     } else if (event.type === 'tool_start' || event.type === 'tool_end') {
       const name = typeof payload.name === 'string' ? payload.name : '工具';
       update({ id: `tool:${typeof payload.id === 'string' ? payload.id : event.seq}`, title: toolNames[name] ?? `调用 ${name}`, ...(event.type === 'tool_end' ? resultState(payload.status) : started) });

@@ -63,7 +63,7 @@ def agent_worker(settings, app_id, csv_path, materials, context, commands, event
             from labweaver.runtime.records import save_run
             from copy import deepcopy
             assets = session.artifact_assets
-            partial = {"report_version": 2, "session_id": session.session_id, "task_id": session.task_id,
+            partial = {"report_version": 3, "task_spec":session.task_spec, "session_id": session.session_id, "task_id": session.task_id,
                        "task": session.task, "status": "error", "source": (session.profile_result or {}).get("source"),
                        "task_plan": deepcopy(session.deliverables), "artifacts": [deepcopy(a["metadata"]) for a in assets.values()],
                        "code_executions": deepcopy(session.analyst.attempts), "final_answer": "",

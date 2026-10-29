@@ -1,0 +1,138 @@
+{
+  "batches": {
+    "baseline": {
+      "recorded_trials": 48,
+      "attained": 31
+    },
+    "candidate": {
+      "recorded_trials": 72,
+      "attained": 41
+    },
+    "candidate-r2": {
+      "recorded_trials": 25,
+      "attained": 17
+    },
+    "candidate-r3": {
+      "recorded_trials": 17,
+      "attained": 10
+    },
+    "development": {
+      "recorded_trials": 18,
+      "attained": 9
+    },
+    "development-v2": {
+      "recorded_trials": 2,
+      "attained": 1
+    },
+    "candidate-v2": {
+      "recorded_trials": 72,
+      "attained": 59
+    }
+  },
+  "total_records": 254,
+  "v2_source_manifest": {
+    "labweaver/__init__.py": "0faa7f84870278e2f08af50f66dbb79bc641d151d9fd4a40ed6464ed46f88a49",
+    "labweaver/__main__.py": "bd053966d6a8b452d3f54e8caef0ac947c6a8e50803a79cdeefa04ac66296f0f",
+    "labweaver/agent.py": "422f5de92983620838ef7d38fde9675b99d5514d032d24ebb179cf23afccc3f4",
+    "labweaver/analysis.py": "bb976315d1f6f0511d596af06f6b98740b55d9c85d34d9f6127b9b628a202cc7",
+    "labweaver/app.py": "c935cb36a544f57056a16400dbe600c637f1be9425d069ccf41aff5f45e695a6",
+    "labweaver/cli.py": "965c319a6fc58ea12fdedccd736e86e21c6304eedf1005e450e65d2e8d025028",
+    "labweaver/config.py": "b96404fc53d2a4546c4ecb1acccc0d70af538eb4551cdae5d0f534cc2e04e433",
+    "labweaver/contracts.py": "b708a9c640c50b54ecff04b25ecaaf1577140237afaf7f7d81867d5edcc830d2",
+    "labweaver/materials.py": "e229702547065d693c5b3563651e9c042cea8844dcc62308cc35ad4f1c082f43",
+    "labweaver/modeling.py": "319ebda550ccad92f600fd837084d5517958c31e1e1adbc1e1193d39e6470f45",
+    "labweaver/offline.py": "56f4ff690dfc4aa9913b2c01ff9740cb44c8d3f8cc8020d413794db5c754b304",
+    "labweaver/run_config.py": "f3a811342e3b278c63065b70ed6f80c24b209e2a952b435c1683bbecc702b2cb",
+    "labweaver/runtime/__init__.py": "d5d24d3675e15beccf0c390b56010647015ef511d24d90b4914566ac16aa450c",
+    "labweaver/runtime/artifacts.py": "2ecec60b4f28fb159a10f7d8192e441488840441704a8e8f803b1cbf348bfbb9",
+    "labweaver/runtime/evidence.py": "4de4082b98d1cd8eb6e826e83865b1cb61bdb7e600de35c67c729e689d459ad9",
+    "labweaver/runtime/execution.py": "9dd04281e67c4b1583cbc57605182e1ba1fffba10eea1fd9f8f6524b29a498d8",
+    "labweaver/runtime/harness.py": "0fa5dae346cdbc6c40249277806ce77c609a1568dad117cb00b3ab76e851c30c",
+    "labweaver/runtime/intake.py": "535ad2b8b5ce236daac92b934f7b9dee4190e28720a3575cdc61550f3a732641",
+    "labweaver/runtime/presentation.py": "715b7777fd53ae53a1abf6cbdbce396576667edfb00d1eae2edbe66b87e2e8b5",
+    "labweaver/runtime/records.py": "22f6017d9501422cc0c820905e217884f146e90725b54df4b43d53b5799fec5b",
+    "labweaver/runtime/replay.py": "6d6162e2e22737212f268ecf21ebb8278458c378eb428f21f7d7e4c277d7cd62",
+    "labweaver/runtime/streaming.py": "fe2f8942e570f97d0d539c2d61278e341fc07872fac7466cd95a16f33bc25a14",
+    "labweaver/runtime/timing.py": "3bb210760855d9fe7dcd9b050726e791e6a6c49f5af80b478f0f0c49d27c431d",
+    "labweaver/runtime/verification.py": "cbfcd0e6e1bab9a6c127d6542a95169237afac400ae98d0be46f6b6226a74fe7",
+    "labweaver/runtime/verification_program.py": "c29773e35ed1be51e3eb9a15ec5dbde04f301d094761dc74cdf755bdfedd3ba3",
+    "labweaver/tools/__init__.py": "118299b363dc37d57ab8890eef2b84e1e6a263cf5104a39170af3863bd7089be",
+    "labweaver/tools/csv_profile.py": "dc5edb0e2d553cfc52ab45b49cbb7a20ca97739d895bbeb7b30065d8b3f7093c",
+    "labweaver/tools/result_pages.py": "7437f2b49a1386ddf37f1d362c043b7dd045e1a449551116d9605f8371babf7c",
+    "labweaver/web/__init__.py": "ea0b859e58bb60574443425a20cc2460621eeea1ba6d080ee548551303267b9b",
+    "labweaver/web/api.py": "acc78504502922c34aeeb775c9a3fa4d849b58b2351b2fd6c48df727deb53b02",
+    "labweaver/web/context.py": "a6b5726e3fb3968bb5000e0f1eacf0015018acd8fa64e46b1c9dc0ed0ec2a625",
+    "labweaver/web/conversations.py": "25f1cf6fea024e7195d0f2fffc901c35e66553b19befce2e3856ab1bca26589e",
+    "labweaver/web/credentials.py": "059a2ec67f3dec075d7265f34333fbcb7ffff92bb2e34afac26ccd2bb353a5e5",
+    "labweaver/web/deadlines.py": "da1f8e466248c3229e2b973e4a504d9eb9f5051de5c3ed5dfeffc31d010bb844",
+    "labweaver/web/files.py": "3b2ee340b3cde8f62ae615742beaf039cd81975230965d87e8250a57f92897e2",
+    "labweaver/web/instances.py": "de569dcf21436e98cb6973b4565e9a48c1e39a254cde4652c060eeee60a79c6a",
+    "labweaver/web/manager.py": "35d7c10cab919cdfaf1b36854267f79efba93b7155a592797801f82b30134462",
+    "labweaver/web/migrations/001.sql": "3596d9c2418e7cbacb57f1350fc814d6c30c1e6d841ad72cb6cb6f94b91125d6",
+    "labweaver/web/migrations/002.sql": "cba27edd479c92d8afc86328bb9676da181831e14d31d424affcb3af7f5a5055",
+    "labweaver/web/migrations/003.sql": "10ed5a5027530db5b609527e4cd59aed0c90e60b193873cd4f2fbd6a6676a7eb",
+    "labweaver/web/provider_http.py": "514bc298cc7e580362b33159ab3d08c420ddddc09f932f52ff7483998d97b2d5",
+    "labweaver/web/providers.py": "f0880e6c98c0c5955d3f6e49fe7e8bf8e36214037664042659ed7922959b683a",
+    "labweaver/web/security.py": "e14023e865812757641d2f1742f576167c6f5a362d12f9ea29f7b1a52e3aeb87",
+    "labweaver/web/server.py": "02b2aeabec0063484342759d9d3ec03fda3d82e73a7c494fed14fb315b0e0d4d",
+    "labweaver/web/settings.py": "3ddc391ad6c6f019c6d38ad74633a1c5436f507532ff77a47ee46b043748c9b3",
+    "labweaver/web/store.py": "ac7b4634d5201ffd4bc5e09a40bdf092e20c3ad1282aaa1cbe48ef8d679d7e3b",
+    "labweaver/web/worker.py": "8a37ae9a9bc0ef966d2cd75488b0a286f731cd2557595662ee0f9f8181887dcd"
+  },
+  "post_snapshot_python_changes": [
+    "labweaver/web/context.py"
+  ],
+  "change_scope": "Only Web history reconstruction changed after the frozen batch; core Agent execution is unchanged. Web and UI validated separately.",
+  "core_contract_review": [
+    {
+      "case": "M1",
+      "repeat": 1,
+      "target_features_split_match": true
+    },
+    {
+      "case": "M1",
+      "repeat": 2,
+      "target_features_split_match": true
+    },
+    {
+      "case": "M1",
+      "repeat": 3,
+      "target_features_split_match": true
+    },
+    {
+      "case": "M2",
+      "repeat": 1,
+      "target_features_split_match": true
+    },
+    {
+      "case": "M2",
+      "repeat": 2,
+      "target_features_split_match": true
+    },
+    {
+      "case": "M2",
+      "repeat": 3,
+      "target_features_split_match": true
+    },
+    {
+      "case": "M3",
+      "repeat": 1,
+      "target_features_split_match": true
+    },
+    {
+      "case": "M3",
+      "repeat": 2,
+      "target_features_split_match": true
+    },
+    {
+      "case": "M3",
+      "repeat": 3,
+      "target_features_split_match": true
+    }
+  ],
+  "limitations": [
+    "Small synthetic suite; correlated repeats.",
+    "Modeling oracle does not prove estimator provenance, absence of training leakage or all semantic requirements.",
+    "v2 changes only approved M3 wording; not a same-task M3 comparison to v1."
+  ]
+}

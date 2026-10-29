@@ -43,7 +43,7 @@ cd ..
 3. 启动 Docker Desktop。在 VS Code 选择 **Terminal → Run Task → AnaliyMaster: Build analysis sandbox**，首次构建会下载锁定依赖和中文字体。也可一次执行：
 
    ```powershell
-   docker build -t labweaver-python:0.2.0 sandbox
+   docker build -t labweaver-python:0.3.0 sandbox
    ```
 
 4. 将 `.env.example` 的设置填入忽略的 `.env`；也可在忽略的 `labweaver.local.toml` 中用 `env_file` 引用已有配置。使用 `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL_ID`。
@@ -98,4 +98,8 @@ uv run --frozen --extra web pytest -q -m "docker and not live"
 
 宿主测试和真实容器验收分别记录，CI 包含 Ubuntu/Windows × Python 3.11/3.12，以及 Ubuntu 的真实 Docker 测试。当前结果与本机环境状态见 [验收](docs/verification.md)，代码结构和权限见 [架构](docs/architecture.md)。
 
-当前支持单 CSV、按需 RAG、当前进程内连续对话、数据处理/统计/绘图与脚本重放。容器关闭网络、使用非 root 和只读根目录，限制资源，不接收宿主密钥或项目目录。Docker 不可用时明确失败，不改用宿主 Python。执行与产物检查不自动证明所有分析口径和数值正确；验收还需独立基准。多表、机器学习、联网数据和长期 Notebook 内核留待后续。
+当前支持单 CSV、按需 RAG、当前进程内连续对话、数据处理/统计/绘图与脚本重放。开发中的报告版本 3 增加任务约定、稳定源记录 ID、分类/回归成果协议和独立指标复算；沙箱加入 scikit-learn 1.7.2。界面分别展示交付状态、核验覆盖与接口实际 token，未检查部分明确标注。详见[可靠分析设计与边界](docs/reliability.md)。
+
+本轮 v2 完整评测达到数值门槛：共同任务基线31/48，新版35/48；24次建模类任务均达到预定行为（包括应澄清的情形），二分类、多分类和Ridge核心案例各3/3。总体59/72，仍有13次未达成；无需内部修正即达成次数没有提升。见[v2结果与边界](evaluation/results/v2.md)及[原版失败记录](evaluation/results/initial.md)。结果仅代表固定公开合成任务，不能外推为任意分析正确性保证。
+
+容器关闭网络、使用非 root 和只读根目录，限制资源，不接收宿主密钥或项目目录。Docker 不可用时明确失败，不改用宿主 Python。独立核验覆盖指定样本和指标，不能证明训练全程无泄漏、模型方法或全部解释正确。多表、模型保存与再次预测、联网数据和长期 Notebook 内核留待后续。

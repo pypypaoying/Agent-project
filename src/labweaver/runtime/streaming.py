@@ -91,6 +91,8 @@ def stream_execution(graph, command, config, on_event):
                 "model_start",
                 "model_end",
                 "model_retry",
+                "verification_start",
+                "verification_end",
             }:
                 on_event(data)
         elif event["type"] == "values":

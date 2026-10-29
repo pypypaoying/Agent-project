@@ -17,6 +17,6 @@ materials = [
 # Never put credentials in this TOML.
 # Reference an existing .env via env_file in ignored labweaver.local.toml.
 # Python runs only in the locked Linux sandbox image (build once).
-execution_image = "labweaver-python:0.2.0"
+execution_image = "labweaver-python:0.3.0"
 execution_timeout = 60
 analysis_max_tokens = 12288

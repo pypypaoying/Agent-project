@@ -103,6 +103,10 @@ def test_actual_core_export_is_completed_only_with_atomic_metadata_and_event(man
     assert result["core_session_id"] == saved["session_id"]
     assert result["core_task_id"] == saved["task_id"]
     assert result["final_answer"] == saved["final_answer"]
+    assert saved['report_version']==3
+    assert result['task_spec']==saved['task_spec']
+    assert result['verification']==saved['verification']
+    assert result['token_usage']==saved['token_usage']
     assert result["events"][-1]["type"] == "completed"
     assert result["events"][-1]["payload"]["status"] == "completed"
     assert {file["media_type"] for file in result["downloads"]} >= {"application/json", "text/markdown"}

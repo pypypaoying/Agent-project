@@ -88,7 +88,7 @@ jobs:
           npm run build
           npx playwright install --with-deps chromium
       - name: Build locked analysis sandbox
-        run: docker build -t labweaver-python:0.2.0 sandbox
+        run: docker build -t labweaver-python:0.3.0 sandbox
       - name: Real container acceptance and isolation
         run: uv run --frozen --extra web pytest -q -m 'docker and not live' --basetemp .cache/pytest-docker-ci
       - name: Public survey example through both Agents

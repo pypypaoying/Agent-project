@@ -22,7 +22,7 @@ class IntakeConfig:
     sample_rows: int
     output_dir: Path
     material_paths: tuple[Path, ...] = ()
-    execution_image: str = "labweaver-python:0.2.0"
+    execution_image: str = "labweaver-python:0.3.0"
     execution_timeout: int = 60
     analysis_max_tokens: int = 12288
 
@@ -36,7 +36,7 @@ _DEFAULTS = {
     "sample_rows": 5,
     "output_dir": "runs",
     "materials": [],
-    "execution_image": "labweaver-python:0.2.0",
+    "execution_image": "labweaver-python:0.3.0",
     "execution_timeout": 60,
     "analysis_max_tokens": 12288,
 }

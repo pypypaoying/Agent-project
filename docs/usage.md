@@ -76,7 +76,7 @@ Windows 新 Key 加密保存在本机应用数据目录，只能由当前 Window
 env_file = "D:/private/existing.env"
 mode = "live"
 analysis_max_tokens = 12288
-execution_image = "labweaver-python:0.2.0"
+execution_image = "labweaver-python:0.3.0"
 execution_timeout = 60
 ```
 
@@ -122,3 +122,10 @@ print(report["status"], report["result_csv_paths"])
 - `missing_deliverables`：任务交付项尚缺真实产物，不能用计划文字代替结果。
 - `execution_timeout/memory_limit/output_limit/artifact_rejected`：资源或产物协议失败，查看保存的执行记录；不静默丢行。
 - 关闭程序后不能 resume；仅可通过成功代码重放或创建新会话。
+# 可靠分析与建模开发版
+
+使用镜像 `labweaver-python:0.3.0` 时可以请求单表分类或回归，例如“用指定特征预测目标，说明拆分方式、比较简单基线，并交付逐行测试预测、指标、图表和报告”。仍使用原对话入口，不需要新的命令模式。目标或切分口径不清楚时回答 Agent 的澄清。
+
+任务完成后展开“任务约定”和“核验覆盖”：前者记录实际使用的目标、特征、范围与默认值；后者区分已通过、失败和未检查的项目，并可查看原始证据。旧记录没有新证据时显示未核验。`completed` 表示登记成果和当前必需检查通过，不代表训练全过程没有泄漏或所有解释均正确。
+
+v2评测已达到数值门槛，仍有未达成案例，详见[v2完整结果](../evaluation/results/v2.md)和[设计边界](reliability.md)。测试预测表使用稳定源记录 ID；完整结果、代码和报告仍可从原下载入口获取。不要用图表或少量预览代替完整结果核对。

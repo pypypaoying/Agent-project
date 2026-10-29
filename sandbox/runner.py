@@ -6,6 +6,7 @@ from pathlib import Path
 import stat
 import subprocess
 import time
+import resource
 
 MAX_BYTES = 50 * 1024 * 1024
 LOG_BYTES = 16 * 1024
@@ -42,6 +43,10 @@ def main():
         "stderr": preview("stderr"),
         "artifacts": [],
     }
+    usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+    result["resource_usage"] = {"user_cpu_seconds":usage.ru_utime,"system_cpu_seconds":usage.ru_stime,
+                                "peak_child_rss_bytes":usage.ru_maxrss * 1024,
+                                "scope":"Linux child-process rusage; not whole-container peak memory"}
     if code == 0:
         try:
             root = Path("/work/artifacts")

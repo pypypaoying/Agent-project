@@ -20,7 +20,7 @@ class WebSettings:
     project_dir: Path
     mode: str = "live"
     env_file: Path | None = None
-    image: str = "labweaver-python:0.2.0"
+    image: str = "labweaver-python:0.3.0"
     execution_timeout: int = 60
     analysis_max_tokens: int = 12288
     model_timeout: float = 180.0

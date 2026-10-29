@@ -6,7 +6,7 @@
       "type": "process",
       "command": "docker",
       "windows": {"command": "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe"},
-      "args": ["build", "-t", "labweaver-python:0.2.0", "sandbox"],
+      "args": ["build", "-t", "labweaver-python:0.3.0", "sandbox"],
       "options": {"cwd": "${workspaceFolder}"},
       "problemMatcher": []
     }

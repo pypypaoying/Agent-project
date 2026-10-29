@@ -13,8 +13,8 @@ def replay_analysis(record_path, csv_path):
     if path.stat().st_size > 100 * 1024 * 1024:
         raise ValueError("Replay record exceeds 100 MiB")
     report = strict_json(path.read_bytes())
-    if report.get("report_version") != 2:
-        raise ValueError("Replay requires a D5 report version 2")
+    if report.get("report_version") not in {2, 3}:
+        raise ValueError("Replay requires report version 2 or 3")
     parsing = report["parsing"]
     snapshot = load_csv_snapshot(
         csv_path, encoding=parsing["encoding"], delimiter=parsing["delimiter"]
@@ -41,7 +41,7 @@ def replay_analysis(record_path, csv_path):
             or not image_id.startswith("sha256:")
         ):
             raise ValueError("Replay requires an immutable image ID")
-        executor = DockerExecutor(ExecutionConfig(image=image_id))
+        executor = DockerExecutor(ExecutionConfig(image=image_id,timeout=old.get("limits",{}).get("seconds",60)))
         record, new_assets = executor.execute(
             old["code"],
             snapshot,
@@ -52,6 +52,9 @@ def replay_analysis(record_path, csv_path):
             - sum(a["metadata"]["kind"] == "figure" for a in assets.values()),
         )
         executions.append(record)
+        if report.get("report_version") == 3 and record["status"] == "completed":
+            from labweaver.runtime.verification import verify_artifacts
+            record["verification"] = verify_artifacts(executor,snapshot,report.get("task_spec") or {},{**assets,**new_assets})
         for asset in new_assets.values():
             asset["metadata"].update(session_id=session_id, task_id=task_id)
         assets.update(new_assets)
@@ -60,7 +63,9 @@ def replay_analysis(record_path, csv_path):
     fulfilled = {a["metadata"]["deliverable_id"] for a in assets.values()}
     missing = [d["id"] for d in report["task_plan"] if d["id"] not in fulfilled]
     result = {
-        "report_version": 2,
+        "report_version": report["report_version"],
+        "task_spec": report.get("task_spec"),
+        "verification": [dict(execution_id=e["id"], **{k:v for k,v in e["verification"].items() if k!="execution"}) for e in executions if "verification" in e],
         "session_id": session_id,
         "task_id": task_id,
         "task": report["task"],
@@ -72,7 +77,7 @@ def replay_analysis(record_path, csv_path):
         "fulfilled_deliverable_ids": sorted(fulfilled),
         "missing_deliverables": missing,
         "status": "completed"
-        if not missing and all(r["status"] == "completed" for r in executions)
+        if not missing and all(r["status"] == "completed" and r.get("verification",{}).get("passed",True) for r in executions)
         else "error",
         "model_calls": 0,
         "analysis_model_calls": 0,

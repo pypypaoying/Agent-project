@@ -4,10 +4,13 @@ import copy
 import json
 import time
 import threading
+from dataclasses import replace
 from langchain.agents import create_agent
 from langchain_core.tools import tool
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, StrictInt
 from labweaver.runtime.artifacts import artifact_view, artifact_receipts
+from labweaver.modeling import ANALYSIS_POLICY, artifact_contracts
+from labweaver.runtime.verification import verification_view
 from labweaver.runtime.evidence import _message_content, _trace_messages, parse_model_object
 from labweaver.runtime.harness import (
     ExecutionHarness,
@@ -49,6 +52,7 @@ class AnalysisRunner:
         read_asset,
         progress=None,
         cancellation_event=None,
+        get_task_spec=None,
     ):
         self.model, self.executor = model, executor
         self.get_snapshot, self.register, self.read_asset = (
@@ -58,6 +62,7 @@ class AnalysisRunner:
         )
         self.progress = progress or (lambda event: None)
         self.cancellation_event = cancellation_event
+        self.get_task_spec = get_task_spec or (lambda: {})
         self._delegation_lock = threading.Lock()
         self.new_task()
 
@@ -70,6 +75,44 @@ class AnalysisRunner:
         if self.model_calls >= 12:
             raise HarnessRejected("analysis_model_budget_exhausted")
         self.model_calls += 1
+
+    def _verification_inputs(self, assets):
+        """Combine current outputs with completed deliveries of this task only."""
+        combined = {}
+        replaced = {a["metadata"]["deliverable_id"] for a in assets.values()}
+        for run in self.runs:
+            if run["status"] != "completed":
+                continue
+            for aid in run["result"].get("artifact_ids", []):
+                try:
+                    asset = self.read_asset(aid)
+                except (KeyError, ValueError):
+                    continue
+                if (asset["metadata"]["source"] == self.get_snapshot().source
+                        and asset["metadata"]["deliverable_id"] not in replaced):
+                    combined[aid] = asset
+        combined.update(assets)
+        return combined
+
+    def _repair_context(self, selected):
+        """One bounded prior failed attempt, never a previous task's execution."""
+        for run in reversed(self.runs):
+            if run["status"] != "error" or not selected.intersection(d["id"] for d in run["deliverables"]):
+                continue
+            attempts = [e for e in self.attempts if e["id"] in run["attempt_ids"]]
+            if not attempts:
+                continue
+            last = attempts[-1]
+            result = {k: copy.deepcopy(last[k]) for k in ("id", "status", "error", "stderr") if k in last}
+            if "verification" in last:
+                result["verification"] = verification_view(last["verification"])
+            code = last.get("code", "")
+            if len(code.encode("utf-8")) <= 32768:
+                result["code"] = code
+            else:
+                result["code_omitted"] = "Complete script exceeds repair-context budget; regenerate from the task contract."
+            return result
+        return None
 
     def delegate(self, instruction, deliverables, parent_id, context="", progress=None):
         with self._delegation_lock:
@@ -128,6 +171,8 @@ class AnalysisRunner:
                 return execute_script(code)
 
         def execute_script(code):
+            from labweaver.runtime.verification import verify_artifacts, verification_view
+            task_spec = self.get_task_spec()
             pending_assets = [self.read_asset(a) for a in available]
             progress(
                 {
@@ -139,13 +184,25 @@ class AnalysisRunner:
                     "code": code,
                 }
             )
-            record, assets = self.executor.execute(
+            original_config = getattr(self.executor,"config",None)
+            if task_spec.get("modeling"):
+                self.executor.config = replace(original_config, timeout=120)
+            try:
+                record, assets = self.executor.execute(
                 code,
                 self.get_snapshot(),
                 deliverables,
                 remaining_bytes=self.register(None, "bytes") + sum(len(raw) for a in pending_assets for raw in a["files"].values()),
                 remaining_figures=self.register(None, "figures") + sum(a["metadata"]["kind"] == "figure" for a in pending_assets),
-            )
+                )
+            finally:
+                if task_spec.get("modeling"):
+                    self.executor.config = original_config
+            if record["status"] == "completed" and assets:
+                progress({"type":"verification_start","role":"host","execution_id":record["id"]})
+                record["verification"] = verify_artifacts(self.executor,self.get_snapshot(),task_spec,self._verification_inputs(assets))
+                progress({"type":"verification_end","role":"host","execution_id":record["id"],
+                          "verification":verification_view(record["verification"])})
             self.attempts.append(record)
             attempt_ids.append(record["id"])
             if assets:
@@ -172,6 +229,11 @@ class AnalysisRunner:
                 if key in record:
                     output[key] = record[key]
             output["artifacts"] = artifact_receipts(assets.values())
+            if "verification" in record:
+                output["verification"] = verification_view(record["verification"])
+                if not record["verification"]["passed"]:
+                    output.update(status="error",error={"code":"verification_failed"},
+                                  repair_instruction="独立核验发现差异。保持原任务约定，修正具体数值或成果并重发完整脚本；不可删除交付要求或跳过检查。")
             fulfilled = {self.read_asset(a)["metadata"]["deliverable_id"] for a in available}
             missing = [d["id"] for d in deliverables if d["id"] not in fulfilled]
             if record["status"] == "completed" and missing:
@@ -216,7 +278,7 @@ class AnalysisRunner:
             model=self.model,
             tools=[execute_python, read_artifact],
             middleware=[harness],
-            system_prompt=ANALYSIS_PROMPT,
+            system_prompt=ANALYSIS_PROMPT.replace("仅使用 pandas、NumPy、Matplotlib 和标准库", "仅使用 pandas、NumPy、Matplotlib、scikit-learn 和标准库") + ANALYSIS_POLICY,
         )
         output = {
             "status": "error",
@@ -240,8 +302,11 @@ class AnalysisRunner:
                                         for i, name in enumerate(snapshot.headers, 1)
                                     ],
                                     "profile": snapshot.profile,
+                                    "task_spec": self.get_task_spec(),
+                                    "artifact_contracts": artifact_contracts(self.get_task_spec()),
                                     "context": context,
                                     "provisional_artifacts": artifact_receipts(self.read_asset(a) for a in available),
+                                    "previous_failed_attempt": self._repair_context(selected),
                                 },
                                 ensure_ascii=False,
                             ),
@@ -281,6 +346,12 @@ class AnalysisRunner:
                     self.read_asset(a)["metadata"]["deliverable_id"] for a in ids
                 }
                 missing = [d["id"] for d in deliverables if d["id"] not in fulfilled]
+                invalid_verification = any(
+                    not e.get("verification",{}).get("passed",True)
+                    for e in self.attempts if set(e["artifact_ids"]) & set(ids)
+                )
+                if invalid_verification:
+                    raise HarnessRejected("verification_failed")
                 if missing:
                     output = {
                         "status": "error",
@@ -296,6 +367,8 @@ class AnalysisRunner:
                         "artifact_ids": ids,
                         "summary": str(final.get("summary", ""))[:3000],
                         "artifacts": artifact_receipts(self.read_asset(a) for a in ids),
+                        "verification": [dict(execution_id=e["id"], **verification_view(e["verification"]))
+                                         for e in self.attempts if "verification" in e and set(e["artifact_ids"]) & set(ids)],
                     }
         except (HarnessRejected, ValueError, KeyError, TypeError) as exc:
             output = {
@@ -324,6 +397,7 @@ class AnalysisRunner:
                 "tool_exposure": harness.tool_exposure,
                 "model_calls": harness.model_calls,
                 "model_diagnostics": harness.model_diagnostics,
+                "token_usage": harness.token_usage,
                 "attempt_ids": attempt_ids,
                 "elapsed_seconds": round(time.monotonic() - start, 3),
                 "result": output,

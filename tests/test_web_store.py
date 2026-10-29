@@ -229,6 +229,28 @@ def test_history_rebuild_keeps_two_completed_tasks_as_facts_not_artifact_authori
     assert "失败内容不可当背景" not in text
 
 
+@pytest.mark.parametrize("failed_verification", [None, {"passed": False}])
+def test_v3_history_only_reuses_active_independently_checked_code(store, failed_verification):
+    conversation = store.new_conversation()
+    file = import_file(store, conversation["id"], "data.csv", b"id,value\n001,2\n002,3\n")
+    report = history_report(file)
+    report['report_version'] = 3
+    report['artifacts'][0]['execution_id'] = 'final'
+    report['code_executions'] = []
+    for ident, verification in [('superseded', {'passed': True}), ('failed', failed_verification), ('final', {'passed': True})]:
+        code = f"# {ident}\nresult = 5\n"
+        execution = dict(id=ident, status='completed', code=code, code_sha256=digest(code.encode()))
+        if verification is not None:
+            execution['verification'] = verification
+        report['code_executions'].append(execution)
+    # Even a retained output without successful checks must not endorse its code.
+    report['artifacts'].append({'kind':'metric','value':5,'execution_id':'failed'})
+    insert_run(store, conversation, status='completed', report=report)
+    text, _ = history_context(store, conversation['id'])
+    fact = json.loads(text)['tasks'][0]
+    assert fact['successful_code'] == ['# final\nresult = 5\n']
+
+
 def test_history_selection_is_scoped_and_rejects_duplicates(store):
     first, second = store.new_conversation(), store.new_conversation()
     file = import_file(store, first["id"], "data.csv", b"id,value\n001,2\n")
